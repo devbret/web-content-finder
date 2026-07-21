@@ -387,8 +387,10 @@ def load_config(args: argparse.Namespace) -> Dict[str, Any]:
 
     api_endpoint = (args.api_endpoint or os.getenv("API_ENDPOINT", "https://www.googleapis.com/customsearch/v1")).strip()
     output_dir = Path((args.output_dir or os.getenv("OUTPUT_DIR", "output")).strip() or "output")
-    text_dir = output_dir / "pages"
-    manifest_dir = output_dir
+    run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = output_dir / f"run_{run_stamp}"
+    text_dir = run_dir / "pages"
+    manifest_dir = run_dir
     log_file = (args.log_file or os.getenv("LOG_FILE", "content_finder.log")).strip() or "content_finder.log"
     user_agent = (
         args.user_agent
@@ -407,6 +409,7 @@ def load_config(args: argparse.Namespace) -> Dict[str, Any]:
         "CX": cx,
         "API_ENDPOINT": api_endpoint,
         "OUTPUT_DIR": output_dir,
+        "RUN_STAMP": run_stamp,
         "TEXT_DIR": text_dir,
         "MANIFEST_DIR": manifest_dir,
         "LOG_PATH": log_path,
@@ -725,15 +728,42 @@ def write_text_file(out_dir: Path, item: ScrapeResult) -> Path:
     return path
 
 
+def update_runs_index(output_dir: Path, logger: logging.Logger) -> None:
+    runs: List[Dict[str, Any]] = []
+
+    for info_path in output_dir.glob("*/run_info.json"):
+        try:
+            with open(info_path, encoding="utf-8") as f:
+                info = json.load(f)
+            info["dir"] = info_path.parent.name
+            runs.append(info)
+        except Exception as exc:
+            logger.warning("Skipping unreadable run info %s: %s", info_path, exc)
+
+    runs.sort(key=lambda r: r.get("generated_at", ""), reverse=True)
+
+    index_path = output_dir / "runs.json"
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {"generated_at": utc_now_iso(), "runs": runs},
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    logger.info("Saved runs index: %s", index_path)
+
+
 def save_manifest(
-    manifest_dir: Path,
     logger: logging.Logger,
+    config: Dict[str, Any],
     data: List[ScrapeResult],
     search_errors: List[SearchError],
 ) -> None:
+    manifest_dir = config["MANIFEST_DIR"]
+    run_stamp = config["RUN_STAMP"]
     manifest_dir.mkdir(parents=True, exist_ok=True)
 
-    run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     json_path = manifest_dir / f"scrape_results_{run_stamp}.json"
     csv_path = manifest_dir / f"scrape_results_{run_stamp}.csv"
     text_path = manifest_dir / f"scrape_results_{run_stamp}.txt"
@@ -755,6 +785,18 @@ def save_manifest(
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
+
+    run_info = {
+        "id": manifest_dir.name,
+        "generated_at": summary["generated_at"],
+        "manifest": json_path.name,
+        "errors": errors_path.name,
+        "queries": list(config["QUERIES"]),
+        "summary": summary,
+    }
+    run_info_path = manifest_dir / "run_info.json"
+    with open(run_info_path, "w", encoding="utf-8") as f:
+        json.dump(run_info, f, indent=2, ensure_ascii=False)
 
     fields = [
         "query",
@@ -808,6 +850,9 @@ def save_manifest(
     logger.info("Saved manifest CSV: %s", csv_path)
     logger.info("Saved combined text: %s", text_path)
     logger.info("Saved search errors JSON: %s", errors_path)
+    logger.info("Saved run info: %s", run_info_path)
+
+    update_runs_index(config["OUTPUT_DIR"], logger)
 
 
 def run_searches(
@@ -970,8 +1015,8 @@ def main() -> None:
             item.status = "not_scraped"
 
     save_manifest(
-        manifest_dir=config["MANIFEST_DIR"],
         logger=logger,
+        config=config,
         data=all_results,
         search_errors=search_errors,
     )

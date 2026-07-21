@@ -1,12 +1,14 @@
 # Web Content Finder
 
+![Screenshot of frontend displaying data from recent searches.](https://hosting.photobucket.com/bbcfb0d4-be20-44a0-94dc-65bff8947cf2/d4dde688-7baf-4fd0-a87d-ac5b4fbcd88b.png)
+
 Searches Google's Programmable Search Engine for your query, visits each result's landing page, scrapes the readable text and saves it all to an `output` folder.
 
 ## Application Overview
 
 A command-line tool which authenticates against Google's Programmable Search Engine using your API key and search-engine ID. The application then runs each query you provide requesting as many result pages as you specify. The collected result links are normalized and de-duplicated so the same URL is never fetched twice.
 
-From there, a number of concurrent workers visits each landing page, confirming the response is HTML before reading it and parses the markup with `BeautifulSoup` to extract the page title, meta description and the main readable body text. Pages which are blocked by domain, return errors, aren't HTML or yield no text are recorded as skipped. Everything is written to a single `output` folder.
+From there, a number of concurrent workers visits each landing page, confirming the response is HTML before reading it and parses the markup with `BeautifulSoup` to extract the page title, meta description and the main readable body text. Pages which are blocked by domain, return errors, aren't HTML or yield no text are recorded as skipped. Everything is written to a single `output` folder. The project also includes a frontend UI for reviewing what each run collected.
 
 ## Basic Setup Instructions
 
@@ -40,9 +42,13 @@ Below are the required software programs and instructions for installing and usi
 
 10. Run the program: `python3 app.py`
 
-11. Downloaded content will be saved to the `output` directory
+11. Start a local web server from the repo's root directory: `python3 -m http.server 8000`
 
-12. When finished, exit the virtual environment: `deactivate`
+12. Visit the frontend UI in your browser: `http://localhost:8000`
+
+13. When finished, stop the web server: `Ctrl+C`
+
+14. Exit the virtual environment: `deactivate`
 
 ## Other Considerations
 
