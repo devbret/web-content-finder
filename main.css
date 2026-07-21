@@ -10,6 +10,7 @@
   --border: rgba(11, 11, 11, 0.1);
   --accent: #2a78d6;
   --accent-wash: rgba(42, 120, 214, 0.1);
+  --accent-soft: rgba(42, 120, 214, 0.16);
   --series-muted: #a8a69e;
   --good-text: #006300;
   --good-wash: rgba(12, 163, 12, 0.12);
@@ -31,6 +32,7 @@
     --border: rgba(255, 255, 255, 0.1);
     --accent: #3987e5;
     --accent-wash: rgba(57, 135, 229, 0.16);
+    --accent-soft: rgba(57, 135, 229, 0.28);
     --series-muted: #565550;
     --good-text: #0ca30c;
     --good-wash: rgba(12, 163, 12, 0.16);
@@ -52,6 +54,7 @@
   --border: rgba(255, 255, 255, 0.1);
   --accent: #3987e5;
   --accent-wash: rgba(57, 135, 229, 0.16);
+  --accent-soft: rgba(57, 135, 229, 0.28);
   --series-muted: #565550;
   --good-text: #0ca30c;
   --good-wash: rgba(12, 163, 12, 0.16);
@@ -492,6 +495,166 @@ main {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 600;
+}
+
+.chart-controls {
+  margin-bottom: 0.9rem;
+}
+
+.chart-controls[hidden] {
+  display: none;
+}
+
+.viz {
+  margin-top: 0.75rem;
+}
+
+.viz svg {
+  display: block;
+  max-width: 100%;
+}
+
+.viz text {
+  font-family: inherit;
+  font-size: 11px;
+  fill: var(--ink-2);
+}
+
+.viz .viz-axis text {
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz .viz-axis .tick line {
+  stroke: var(--grid);
+}
+
+.viz .viz-baseline {
+  stroke: var(--baseline);
+}
+
+.viz-axis-title {
+  fill: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.viz-mark.seg-accent {
+  fill: var(--accent);
+}
+
+.viz-mark.seg-muted {
+  fill: var(--series-muted);
+}
+
+.viz-hit {
+  fill: transparent;
+}
+
+.viz-col:hover .viz-mark,
+.viz-col:focus-visible .viz-mark,
+.viz-row:hover .viz-mark,
+.viz-row:focus-visible .viz-mark {
+  filter: brightness(1.08);
+}
+
+.viz-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.viz-line-accent {
+  stroke: var(--accent);
+}
+
+.viz-line-muted {
+  stroke: var(--series-muted);
+}
+
+.viz-dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.viz-dot-accent {
+  fill: var(--accent);
+}
+
+.viz-dot-muted {
+  fill: var(--series-muted);
+}
+
+.viz-point {
+  cursor: pointer;
+}
+
+.viz-point.is-active {
+  r: 6px;
+  filter: brightness(1.1);
+}
+
+.viz-crosshair {
+  stroke: var(--baseline);
+  stroke-width: 1;
+}
+
+.viz-end-label {
+  fill: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-cell {
+  fill: var(--accent-soft);
+}
+
+.viz-cell.viz-cell-other {
+  fill: var(--grid);
+}
+
+.viz-cell-group:hover .viz-cell,
+.viz-cell-group:focus-visible .viz-cell {
+  filter: brightness(1.05);
+}
+
+.viz-cell-label {
+  fill: var(--ink);
+  font-weight: 600;
+}
+
+.viz-cell-sub {
+  fill: var(--ink-2);
+}
+
+.viz-row-label,
+.viz-row-value {
+  fill: var(--ink-2);
+}
+
+.viz-row-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-cloud-word {
+  fill: var(--ink-2);
+  cursor: pointer;
+}
+
+.viz-cloud-word.is-top {
+  fill: var(--accent);
+}
+
+.viz-cloud-word:hover,
+.viz-cloud-word:focus-visible {
+  fill: var(--accent);
+  text-decoration: underline;
+}
+
+.viz [tabindex="0"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .chart-legend {
