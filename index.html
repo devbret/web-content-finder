@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web Content Finder - Results Explorer</title>
+    <link rel="stylesheet" href="main.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-title">
+        <h1>Web Content Finder</h1>
+        <p class="subtitle" id="source-label">Results explorer</p>
+      </div>
+      <div class="header-actions">
+        <select
+          id="run-select"
+          class="run-select"
+          title="Choose a run"
+          hidden
+        ></select>
+        <button
+          type="button"
+          id="theme-toggle"
+          class="ghost-button"
+          title="Cycle color theme"
+        >
+          Theme: Auto
+        </button>
+        <label class="file-button">
+          Load JSON file
+          <input
+            type="file"
+            id="file-input"
+            accept=".json,application/json"
+            hidden
+          />
+        </label>
+      </div>
+    </header>
+
+    <main>
+      <section id="drop-zone" class="drop-zone">
+        <p>
+          Drop a <code>scrape_results_*.json</code> file here, or click
+          <strong>Load JSON file</strong> above.
+        </p>
+      </section>
+
+      <section id="dashboard" hidden>
+        <div id="summary" class="summary"></div>
+
+        <nav class="tabs" role="tablist" aria-label="Sections">
+          <button
+            type="button"
+            role="tab"
+            id="tab-results"
+            data-tab="results"
+            aria-selected="true"
+          >
+            Results
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="tab-overview"
+            data-tab="overview"
+            aria-selected="false"
+          >
+            Analytics
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="tab-errors"
+            data-tab="errors"
+            aria-selected="false"
+          >
+            Search errors
+            <span id="error-badge" class="tab-badge">0</span>
+          </button>
+        </nav>
+
+        <section
+          id="panel-results"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-results"
+        >
+          <div class="controls">
+            <input
+              type="search"
+              id="search"
+              placeholder="Filter by title, URL or description…"
+            />
+            <select id="query-filter" title="Filter by query"></select>
+            <select id="status-filter" title="Filter by status">
+              <option value="all">All statuses</option>
+              <option value="scraped">Scraped</option>
+              <option value="skipped">Skipped</option>
+              <option value="not_scraped">Not scraped</option>
+            </select>
+            <select id="sort" title="Sort results">
+              <option value="rank">Sort: search rank</option>
+              <option value="words">Sort: word count</option>
+              <option value="title">Sort: title A-Z</option>
+              <option value="domain">Sort: domain A-Z</option>
+            </select>
+          </div>
+
+          <p id="result-count" class="result-count"></p>
+          <ol id="results" class="results"></ol>
+          <div class="pager" id="pager" hidden>
+            <button type="button" id="show-more" class="ghost-button">
+              Show more
+            </button>
+            <button type="button" id="show-all" class="ghost-button">
+              Show all
+            </button>
+          </div>
+        </section>
+
+        <section
+          id="panel-overview"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-overview"
+          hidden
+        >
+          <div id="charts" class="charts"></div>
+        </section>
+
+        <section
+          id="panel-errors"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-errors"
+          hidden
+        >
+          <div id="errors-content"></div>
+        </section>
+      </section>
+    </main>
+
+    <div id="tooltip" class="tooltip" role="status" hidden></div>
+    <script src="main.js"></script>
+  </body>
+</html>
