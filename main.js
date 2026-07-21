@@ -12,6 +12,7 @@ const state = {
   errorsNote: "",
   search: "",
   query: "all",
+  chartQuery: "all",
   status: "all",
   sort: "rank",
   visibleCount: PAGE_SIZE,
@@ -40,6 +41,8 @@ const els = {
   showMore: document.getElementById("show-more"),
   showAll: document.getElementById("show-all"),
   charts: document.getElementById("charts"),
+  chartControls: document.getElementById("chart-controls"),
+  chartQueryFilter: document.getElementById("chart-query-filter"),
   errorsContent: document.getElementById("errors-content"),
   tooltip: document.getElementById("tooltip"),
 };
@@ -367,20 +370,25 @@ function populateQueryFilter() {
     ...new Set(state.results.map((r) => r.query).filter(Boolean)),
   ];
 
-  els.queryFilter.textContent = "";
+  const fill = (select) => {
+    select.textContent = "";
+    const allOption = el("option", "", "All queries");
+    allOption.value = "all";
+    select.appendChild(allOption);
+    for (const query of queries) {
+      const option = el("option", "", query);
+      option.value = `q:${query}`;
+      select.appendChild(option);
+    }
+    select.value = "all";
+  };
 
-  const allOption = el("option", "", "All queries");
-  allOption.value = "all";
-  els.queryFilter.appendChild(allOption);
-
-  for (const query of queries) {
-    const option = el("option", "", query);
-    option.value = query;
-    els.queryFilter.appendChild(option);
-  }
+  fill(els.queryFilter);
+  fill(els.chartQueryFilter);
+  els.chartControls.hidden = queries.length < 2;
 
   state.query = "all";
-  els.queryFilter.value = "all";
+  state.chartQuery = "all";
   state.status = "all";
   els.statusFilter.value = "all";
   state.search = "";
@@ -396,7 +404,8 @@ function applyFilters() {
   const needle = state.search.trim().toLowerCase();
 
   const items = state.results.filter((item) => {
-    if (state.query !== "all" && item.query !== state.query) return false;
+    if (state.query !== "all" && item.query !== state.query.slice(2))
+      return false;
     if (state.status !== "all" && item.status !== state.status) return false;
     if (needle && !matchesSearch(item, needle)) return false;
     return true;
@@ -460,7 +469,7 @@ function buildDetails(item) {
   if (item.final_url && item.final_url !== item.link) {
     addDetail(dl, "Final URL", item.final_url);
   }
-  if (item.sha256) addDetail(dl, "SHA-256", item.sha256.slice(0, 16) + "…");
+  if (item.sha256) addDetail(dl, "SHA-256", item.sha256.slice(0, 16) + "...");
   addDetail(dl, "Saved as", item.saved_as);
   return dl;
 }
@@ -773,15 +782,1306 @@ function buildDomainsChart(domains, series, splitOf, expanded) {
   return card;
 }
 
+const VIZ_MIN_WIDTH = 120;
+const VIZ_FONT = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+const VIZ_FONT_SEMIBOLD = `600 ${VIZ_FONT}`;
+
+const chartDrawers = new Map();
+const chartObserver =
+  "ResizeObserver" in window
+    ? new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const rec = chartDrawers.get(entry.target);
+          if (!rec) continue;
+          const width = Math.floor(entry.contentRect.width);
+          if (width < VIZ_MIN_WIDTH || Math.abs(width - rec.width) < 2) {
+            continue;
+          }
+          rec.width = width;
+          if (!rec.raf) {
+            rec.raf = requestAnimationFrame(() => {
+              rec.raf = 0;
+              rec.draw(rec.width);
+            });
+          }
+        }
+      })
+    : null;
+
+function clearCharts() {
+  for (const rec of chartDrawers.values()) {
+    if (rec.raf) cancelAnimationFrame(rec.raf);
+  }
+  chartDrawers.clear();
+  if (chartObserver) chartObserver.disconnect();
+}
+
+let vizTextCtx = null;
+function measureVizText(text, font) {
+  if (!vizTextCtx) {
+    vizTextCtx = document.createElement("canvas").getContext("2d");
+  }
+  vizTextCtx.font = font || VIZ_FONT;
+  return vizTextCtx.measureText(text).width;
+}
+
+function vizCard(title) {
+  const card = el("section", "chart-card");
+  card.appendChild(el("h3", "chart-title", title));
+  const body = el("div", "viz");
+  card.appendChild(body);
+  return { card, body };
+}
+
+function buildLegend(series) {
+  const legend = el("div", "chart-legend");
+  for (const s of series) {
+    const item = el("span", "legend-item");
+    const swatch = el("span", `legend-swatch bar-seg ${s.cls}`);
+    swatch.style.height = "10px";
+    item.appendChild(swatch);
+    item.appendChild(el("span", "", s.label));
+    legend.appendChild(item);
+  }
+  return legend;
+}
+
+function registerViz(card, body, draw) {
+  const rec = {
+    width: 0,
+    raf: 0,
+    measure: () => Math.floor(body.clientWidth),
+    draw(width) {
+      body.textContent = "";
+      draw(body, width);
+    },
+  };
+  chartDrawers.set(card, rec);
+  if (chartObserver) chartObserver.observe(card);
+  const width = rec.measure();
+  if (width >= VIZ_MIN_WIDTH) {
+    rec.width = width;
+    rec.draw(width);
+  }
+}
+
+function appendChartTable(card, headers, rows) {
+  const details = el("details", "chart-table");
+  details.appendChild(el("summary", "", "View as table"));
+  const scroll = el("div", "table-scroll");
+  const table = el("table", "data-table");
+  const thead = el("thead");
+  const headRow = el("tr");
+  for (const h of headers) {
+    headRow.appendChild(el("th", h.num ? "num" : "", h.label));
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = el("tbody");
+  for (const row of rows) {
+    const tr = el("tr");
+    row.forEach((value, i) => {
+      tr.appendChild(
+        el("td", headers[i] && headers[i].num ? "num" : "", String(value)),
+      );
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  details.appendChild(scroll);
+  card.appendChild(details);
+}
+
+function clientPoint(svgNode, x, y) {
+  const rect = svgNode.getBoundingClientRect();
+  return [rect.left + x, rect.top + y];
+}
+
+function roundedTopBarPath(x, y, w, h, radius) {
+  const r = Math.max(0, Math.min(radius, w / 2, h));
+  return (
+    `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} ` +
+    `L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`
+  );
+}
+
+function roundedRightBarPath(x, y, w, h, radius) {
+  const r = Math.max(0, Math.min(radius, h / 2, w));
+  return (
+    `M${x},${y} L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} ` +
+    `L${x + w},${y + h - r} Q${x + w},${y + h} ${x + w - r},${y + h} L${x},${y + h} Z`
+  );
+}
+
+function drawYAxisGrid(
+  svg,
+  scale,
+  { left, right, ticks = 4, format = formatCompact, tickValues },
+) {
+  const axis = d3
+    .axisLeft(scale)
+    .tickSize(-(right - left))
+    .tickPadding(8)
+    .tickFormat(format);
+  axis.tickValues(tickValues || scale.ticks(ticks).filter(Number.isInteger));
+  const g = svg
+    .append("g")
+    .attr("class", "viz-axis")
+    .attr("transform", `translate(${left},0)`)
+    .call(axis);
+  g.select(".domain").remove();
+  return g;
+}
+
+function drawXAxis(svg, scale, { y, ticks, format, tickValues }) {
+  const axis = d3.axisBottom(scale).tickSize(0).tickPadding(8);
+  if (tickValues) axis.tickValues(tickValues);
+  else if (ticks != null) axis.ticks(ticks);
+  if (format) axis.tickFormat(format);
+  const g = svg
+    .append("g")
+    .attr("class", "viz-axis")
+    .attr("transform", `translate(0,${y})`)
+    .call(axis);
+  g.select(".domain").remove();
+  return g;
+}
+
+function drawBaseline(svg, x0, x1, y) {
+  svg
+    .append("line")
+    .attr("class", "viz-baseline")
+    .attr("x1", x0)
+    .attr("x2", x1)
+    .attr("y1", y)
+    .attr("y2", y);
+}
+
+function formatElapsed(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  const m = Math.floor(s / 60);
+  return m ? `${m}:${String(s % 60).padStart(2, "0")}` : `${s}s`;
+}
+
+function buildTimelineChart(results, series) {
+  const events = results
+    .map((r) => ({ item: r, time: Date.parse(r.fetched_at || "") }))
+    .filter((e) => Number.isFinite(e.time))
+    .sort((a, b) => a.time - b.time);
+  if (events.length < 2) return null;
+
+  const t0 = events[0].time;
+  let scrapedCum = 0;
+  let restCum = 0;
+  const points = events.map((e) => {
+    if (e.item.status === "scraped") scrapedCum += 1;
+    else restCum += 1;
+    return {
+      seconds: (e.time - t0) / 1000,
+      scraped: scrapedCum,
+      rest: restCum,
+      time: e.time,
+      item: e.item,
+    };
+  });
+  const duration = points[points.length - 1].seconds;
+
+  const { card, body } = vizCard("Fetch Timeline");
+  card.insertBefore(buildLegend(series), body);
+
+  registerViz(card, body, (host, width) => {
+    const height = 260;
+    const margin = { top: 16, right: 116, bottom: 34, left: 46 };
+    const x = d3
+      .scaleLinear()
+      .domain([0, Math.max(duration, 1)])
+      .range([margin.left, width - margin.right]);
+    const y = d3
+      .scaleLinear()
+      .domain([0, Math.max(scrapedCum, restCum, 1)])
+      .nice()
+      .range([height - margin.bottom, margin.top]);
+
+    const svg = d3
+      .select(host)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("role", "img")
+      .attr("tabindex", 0)
+      .attr(
+        "aria-label",
+        `Fetch timeline: ${formatNumber(scrapedCum)} ${series[0].label.toLowerCase()} and ` +
+          `${formatNumber(restCum)} ${series[1].label.toLowerCase()} pages over ` +
+          `${formatElapsed(duration)}. Use arrow keys to step through the run.`,
+      );
+
+    drawYAxisGrid(svg, y, { left: margin.left, right: width - margin.right });
+    const seen = new Set();
+    const timeTicks = x
+      .ticks(Math.max(3, Math.min(8, Math.floor(width / 90))))
+      .filter((t) => {
+        const label = formatElapsed(t);
+        if (seen.has(label)) return false;
+        seen.add(label);
+        return true;
+      });
+    drawXAxis(svg, x, {
+      y: height - margin.bottom,
+      tickValues: timeTicks,
+      format: formatElapsed,
+    });
+    drawBaseline(svg, margin.left, width - margin.right, y(0));
+
+    const lines = [
+      {
+        key: "scraped",
+        cls: "viz-line-accent",
+        dotCls: "viz-dot-accent",
+        label: series[0].label,
+        last: scrapedCum,
+      },
+      {
+        key: "rest",
+        cls: "viz-line-muted",
+        dotCls: "viz-dot-muted",
+        label: series[1].label,
+        last: restCum,
+      },
+    ];
+    const linePoints = [{ seconds: 0, scraped: 0, rest: 0 }, ...points];
+    for (const l of lines) {
+      const gen = d3
+        .line()
+        .x((p) => x(p.seconds))
+        .y((p) => y(p[l.key]))
+        .curve(d3.curveStepAfter);
+      svg
+        .append("path")
+        .attr("class", `viz-line ${l.cls}`)
+        .attr("d", gen(linePoints));
+    }
+
+    const xEnd = x(duration);
+    const endLabelY = lines.map((l) => y(l.last));
+    if (Math.abs(endLabelY[0] - endLabelY[1]) < 14) {
+      const mid = (endLabelY[0] + endLabelY[1]) / 2;
+      const upper = endLabelY[0] <= endLabelY[1] ? 0 : 1;
+      endLabelY[upper] = mid - 7;
+      endLabelY[1 - upper] = mid + 7;
+    }
+    lines.forEach((l, i) => {
+      svg
+        .append("circle")
+        .attr("class", `viz-dot ${l.dotCls}`)
+        .attr("cx", xEnd)
+        .attr("cy", y(l.last))
+        .attr("r", 4);
+      svg
+        .append("text")
+        .attr("class", "viz-end-label")
+        .attr("x", xEnd + 10)
+        .attr("y", endLabelY[i] + 4)
+        .text(`${formatNumber(l.last)} ${l.label.toLowerCase()}`);
+    });
+
+    const crosshair = svg
+      .append("line")
+      .attr("class", "viz-crosshair")
+      .attr("y1", margin.top)
+      .attr("y2", height - margin.bottom)
+      .attr("visibility", "hidden");
+    const hoverDots = lines.map((l) =>
+      svg
+        .append("circle")
+        .attr("class", `viz-dot ${l.dotCls}`)
+        .attr("r", 4)
+        .attr("visibility", "hidden"),
+    );
+
+    const bisect = d3.bisector((p) => p.seconds).center;
+    let focusIndex = -1;
+
+    const showAt = (index, clientX, clientY) => {
+      const p = points[index];
+      if (!p) return;
+      const px = x(p.seconds);
+      crosshair.attr("x1", px).attr("x2", px).attr("visibility", "visible");
+      hoverDots[0]
+        .attr("cx", px)
+        .attr("cy", y(p.scraped))
+        .attr("visibility", "visible");
+      hoverDots[1]
+        .attr("cx", px)
+        .attr("cy", y(p.rest))
+        .attr("visibility", "visible");
+      const when = new Date(p.time);
+      const title = Number.isNaN(when.getTime())
+        ? formatElapsed(p.seconds)
+        : `${formatElapsed(p.seconds)} (${when.toLocaleTimeString()})`;
+      showTooltip(
+        title,
+        [
+          {
+            value: formatNumber(p.scraped),
+            label: series[0].label.toLowerCase(),
+            color: seriesColor(series[0].cls),
+          },
+          {
+            value: formatNumber(p.rest),
+            label: series[1].label.toLowerCase(),
+            color: seriesColor(series[1].cls),
+          },
+          { value: formatNumber(p.scraped + p.rest), label: "total fetched" },
+        ],
+        clientX,
+        clientY,
+      );
+    };
+    const hideHover = () => {
+      crosshair.attr("visibility", "hidden");
+      for (const dot of hoverDots) dot.attr("visibility", "hidden");
+      hideTooltip();
+    };
+
+    svg.on("pointermove", (event) => {
+      const [mx] = d3.pointer(event);
+      focusIndex = bisect(points, x.invert(mx));
+      showAt(focusIndex, event.clientX, event.clientY);
+    });
+    svg.on("pointerleave", hideHover);
+    svg.on("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      const from =
+        focusIndex < 0 ? (step > 0 ? -1 : points.length) : focusIndex;
+      focusIndex = Math.max(0, Math.min(points.length - 1, from + step));
+      const p = points[focusIndex];
+      const [cx, cy] = clientPoint(svg.node(), x(p.seconds), y(p.scraped));
+      showAt(focusIndex, cx, cy);
+    });
+    svg.on("blur", () => {
+      focusIndex = -1;
+      hideHover();
+    });
+  });
+
+  appendChartTable(
+    card,
+    [
+      { label: "Elapsed" },
+      { label: "Domain" },
+      { label: "Outcome" },
+      { label: series[0].label, num: true },
+      { label: series[1].label, num: true },
+    ],
+    points.map((p) => [
+      formatElapsed(p.seconds),
+      p.item._domain,
+      (p.item.status || "unknown").replace("_", " "),
+      formatNumber(p.scraped),
+      formatNumber(p.rest),
+    ]),
+  );
+
+  return card;
+}
+
+function buildColumnChartCard({
+  title,
+  series,
+  rows,
+  ariaLabel,
+  xTitle,
+  extraTooltip,
+  tableHeaders,
+  tableRows,
+}) {
+  const { card, body } = vizCard(title);
+  if (series.length > 1) card.insertBefore(buildLegend(series), body);
+
+  registerViz(card, body, (host, width) => {
+    const height = 250;
+    const margin = { top: 16, right: 12, bottom: xTitle ? 48 : 34, left: 46 };
+    const x = d3
+      .scaleBand()
+      .domain(d3.range(rows.length))
+      .range([margin.left, width - margin.right])
+      .paddingInner(0.25)
+      .paddingOuter(0.1);
+    const maxTotal = Math.max(1, ...rows.map((r) => d3.sum(r.values)));
+    const y = d3
+      .scaleLinear()
+      .domain([0, maxTotal])
+      .nice()
+      .range([height - margin.bottom, margin.top]);
+
+    const svg = d3
+      .select(host)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("role", "img");
+    if (ariaLabel) svg.attr("aria-label", ariaLabel);
+
+    drawYAxisGrid(svg, y, { left: margin.left, right: width - margin.right });
+
+    const labelSpace =
+      Math.max(...rows.map((r) => measureVizText(r.label))) + 14;
+    const plotWidth = Math.max(1, width - margin.left - margin.right);
+    const every = Math.max(
+      1,
+      Math.ceil((labelSpace * rows.length) / plotWidth),
+    );
+    drawXAxis(svg, x, {
+      y: height - margin.bottom,
+      tickValues: d3.range(rows.length).filter((i) => i % every === 0),
+      format: (i) => rows[i].label,
+    });
+    drawBaseline(svg, margin.left, width - margin.right, y(0));
+    if (xTitle) {
+      svg
+        .append("text")
+        .attr("class", "viz-axis-title")
+        .attr("x", (margin.left + width - margin.right) / 2)
+        .attr("y", height - 6)
+        .attr("text-anchor", "middle")
+        .text(xTitle);
+    }
+
+    const barWidth = Math.min(24, x.bandwidth());
+    rows.forEach((row, i) => {
+      const total = d3.sum(row.values);
+      const parts = series
+        .map((s, si) => ({ s, value: row.values[si] }))
+        .filter((p) => p.value > 0);
+
+      const g = svg
+        .append("g")
+        .attr("class", "viz-col")
+        .attr("tabindex", 0)
+        .attr(
+          "aria-label",
+          `${row.label}: ` +
+            (parts.length
+              ? parts
+                  .map((p) => `${formatNumber(p.value)} ${p.s.label}`)
+                  .join(", ")
+              : "0"),
+        );
+      g.append("rect")
+        .attr("class", "viz-hit")
+        .attr("x", x(i))
+        .attr("y", margin.top)
+        .attr("width", x.bandwidth())
+        .attr("height", height - margin.top - margin.bottom);
+
+      const x0 = x(i) + (x.bandwidth() - barWidth) / 2;
+      let cum = 0;
+      parts.forEach((part, pi) => {
+        const yTop = y(cum + part.value);
+        const yBottom = y(cum);
+        const gap = pi > 0 ? 2 : 0;
+        const h = Math.max(1, yBottom - yTop - gap);
+        if (pi === parts.length - 1) {
+          g.append("path")
+            .attr("class", `viz-mark ${part.s.cls}`)
+            .attr("d", roundedTopBarPath(x0, yTop, barWidth, h, 4));
+        } else {
+          g.append("rect")
+            .attr("class", `viz-mark ${part.s.cls}`)
+            .attr("x", x0)
+            .attr("y", yTop)
+            .attr("width", barWidth)
+            .attr("height", h);
+        }
+        cum += part.value;
+      });
+
+      const tooltipRows = () => {
+        const list = series.map((s, si) => ({
+          value: formatNumber(row.values[si]),
+          label: s.label.toLowerCase(),
+          color: seriesColor(s.cls),
+        }));
+        if (series.length > 1) {
+          list.push({ value: formatNumber(total), label: "total" });
+        }
+        if (extraTooltip) list.push(...extraTooltip(row));
+        return list;
+      };
+      g.on("pointermove", (event) =>
+        showTooltip(row.label, tooltipRows(), event.clientX, event.clientY),
+      );
+      g.on("pointerleave", hideTooltip);
+      g.on("focus", () => {
+        const [cx, cy] = clientPoint(
+          svg.node(),
+          x(i) + x.bandwidth() / 2,
+          y(total),
+        );
+        showTooltip(row.label, tooltipRows(), cx, cy);
+      });
+      g.on("blur", hideTooltip);
+    });
+  });
+
+  appendChartTable(card, tableHeaders, tableRows);
+  return card;
+}
+
+function buildRankDepthChart(results, series) {
+  const ranked = results.filter((r) => Number(r.search_rank) > 0);
+  const maxRank = d3.max(ranked, (r) => Number(r.search_rank)) || 0;
+  if (ranked.length < 2 || maxRank <= 10) return null;
+
+  const bucketSize = 10;
+  const bucketCount = Math.ceil(maxRank / bucketSize);
+  const buckets = Array.from({ length: bucketCount }, (_, i) => ({
+    label: `${i * bucketSize + 1}-${(i + 1) * bucketSize}`,
+    scraped: 0,
+    rest: 0,
+  }));
+  for (const r of ranked) {
+    const index = Math.min(
+      bucketCount - 1,
+      Math.floor((Number(r.search_rank) - 1) / bucketSize),
+    );
+    if (r.status === "scraped") buckets[index].scraped += 1;
+    else buckets[index].rest += 1;
+  }
+  const rows = buckets.map((b) => ({
+    label: b.label,
+    values: [b.scraped, b.rest],
+  }));
+  const rateOf = (row) => {
+    const total = row.values[0] + row.values[1];
+    return total ? Math.round((row.values[0] / total) * 100) : 0;
+  };
+
+  return buildColumnChartCard({
+    title: "Scraping By Search Depth",
+    series,
+    rows,
+    ariaLabel: `Stacked columns of scrape outcomes across ${formatNumber(bucketCount)} search-rank buckets.`,
+    xTitle: "Search rank",
+    extraTooltip: (row) => [{ value: `${rateOf(row)}%`, label: "scraped" }],
+    tableHeaders: [
+      { label: "Search rank" },
+      { label: series[0].label, num: true },
+      { label: series[1].label, num: true },
+      { label: "Total", num: true },
+      { label: "Scraped %", num: true },
+    ],
+    tableRows: rows.map((row) => [
+      row.label,
+      formatNumber(row.values[0]),
+      formatNumber(row.values[1]),
+      formatNumber(row.values[0] + row.values[1]),
+      `${rateOf(row)}%`,
+    ]),
+  });
+}
+
+const WORD_BUCKET_EDGES = [
+  0, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, 250000,
+  1000000,
+];
+
+function buildWordHistogram(results) {
+  const scraped = results.filter(
+    (r) => r.status === "scraped" && Number(r.word_count) > 0,
+  );
+  if (scraped.length < 2) return null;
+
+  const maxWords = d3.max(scraped, (r) => Number(r.word_count));
+  let end = WORD_BUCKET_EDGES.findIndex((edge) => edge >= maxWords);
+  if (end === -1) end = WORD_BUCKET_EDGES.length - 1;
+  const edges = WORD_BUCKET_EDGES.slice(0, end + 1);
+  const counts = new Array(edges.length - 1).fill(0);
+  for (const r of scraped) {
+    const words = Number(r.word_count);
+    let index = edges.findIndex((edge) => words <= edge) - 1;
+    if (index < 0) index = counts.length - 1;
+    counts[Math.min(index, counts.length - 1)] += 1;
+  }
+  const start = Math.max(
+    0,
+    counts.findIndex((c) => c > 0),
+  );
+  const fmtEdge = (n) =>
+    n >= 1000000 ? `${n / 1000000}M` : n >= 1000 ? `${n / 1000}k` : String(n);
+  const rows = counts.slice(start).map((count, i) => ({
+    label: `${fmtEdge(edges[start + i])}-${fmtEdge(edges[start + i + 1])}`,
+    values: [count],
+  }));
+
+  return buildColumnChartCard({
+    title: "Word Count Distribution",
+    series: [{ key: "pages", label: "Scraped pages", cls: "seg-accent" }],
+    rows,
+    ariaLabel: `Histogram of words per scraped page across ${formatNumber(scraped.length)} pages.`,
+    xTitle: "Words per page",
+    tableHeaders: [{ label: "Words per page" }, { label: "Pages", num: true }],
+    tableRows: rows.map((row) => [row.label, formatNumber(row.values[0])]),
+  });
+}
+
+function buildRankWordsScatter(results, showQuery) {
+  const pages = results.filter(
+    (r) =>
+      r.status === "scraped" &&
+      Number(r.search_rank) > 0 &&
+      Number(r.word_count) > 0,
+  );
+  if (pages.length < 3) return null;
+
+  const sorted = [...pages].sort(
+    (a, b) =>
+      Number(a.search_rank) - Number(b.search_rank) ||
+      Number(b.word_count) - Number(a.word_count),
+  );
+  const maxRank = d3.max(sorted, (r) => Number(r.search_rank));
+  const [minWords, maxWords] = d3.extent(sorted, (r) => Number(r.word_count));
+  const useLog = maxWords / Math.max(1, minWords) >= 100;
+
+  const { card, body } = vizCard("Search Rank vs. Words Extracted");
+
+  registerViz(card, body, (host, width) => {
+    const height = 300;
+    const margin = { top: 24, right: 18, bottom: 44, left: 52 };
+    const x = d3
+      .scaleLinear()
+      .domain([0, maxRank])
+      .nice()
+      .range([margin.left, width - margin.right]);
+    const y = (
+      useLog
+        ? d3.scaleLog().domain([Math.max(1, minWords), maxWords])
+        : d3.scaleLinear().domain([0, maxWords])
+    )
+      .nice()
+      .range([height - margin.bottom, margin.top]);
+
+    const svg = d3
+      .select(host)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("role", "img")
+      .attr("tabindex", 0)
+      .attr(
+        "aria-label",
+        `Scatter plot of ${formatNumber(sorted.length)} scraped pages by search rank and ` +
+          `word count. Use arrow keys to move between pages and Enter to open one.`,
+      );
+
+    drawYAxisGrid(svg, y, {
+      left: margin.left,
+      right: width - margin.right,
+      tickValues: useLog
+        ? y.ticks().filter((t) => Number.isInteger(Math.log10(t)))
+        : undefined,
+    });
+    drawXAxis(svg, x, {
+      y: height - margin.bottom,
+      tickValues: x
+        .ticks(Math.max(4, Math.min(10, Math.floor(width / 70))))
+        .filter((t) => Number.isInteger(t)),
+      format: d3.format(",d"),
+    });
+    drawBaseline(
+      svg,
+      margin.left,
+      width - margin.right,
+      height - margin.bottom,
+    );
+    svg
+      .append("text")
+      .attr("class", "viz-axis-title")
+      .attr("x", (margin.left + width - margin.right) / 2)
+      .attr("y", height - 6)
+      .attr("text-anchor", "middle")
+      .text("Search rank");
+    svg
+      .append("text")
+      .attr("class", "viz-axis-title")
+      .attr("x", margin.left - 44)
+      .attr("y", 11)
+      .text("Words");
+
+    const px = (r) => x(Number(r.search_rank));
+    const py = (r) => y(Number(r.word_count));
+    const dots = svg.append("g");
+    const circles = sorted.map((r) =>
+      dots
+        .append("circle")
+        .attr("class", "viz-dot viz-dot-accent viz-point")
+        .attr("cx", px(r))
+        .attr("cy", py(r))
+        .attr("r", 4)
+        .node(),
+    );
+
+    const delaunay = d3.Delaunay.from(sorted, px, py);
+    let activeIndex = -1;
+
+    const activate = (index, clientX, clientY) => {
+      if (activeIndex >= 0 && circles[activeIndex]) {
+        circles[activeIndex].classList.remove("is-active");
+      }
+      activeIndex = index;
+      const r = sorted[index];
+      if (!r) return;
+      circles[index].classList.add("is-active");
+      const title = (r.page_title || r.title || r.link || "(untitled)").slice(
+        0,
+        90,
+      );
+      showTooltip(
+        title,
+        [
+          { value: formatNumber(r.word_count), label: "words" },
+          {
+            value: `#${r.search_rank}`,
+            label: showQuery && r.query ? `in "${r.query}"` : "search rank",
+          },
+          { value: "", label: r._domain },
+        ],
+        clientX,
+        clientY,
+      );
+    };
+    const deactivate = () => {
+      if (activeIndex >= 0 && circles[activeIndex]) {
+        circles[activeIndex].classList.remove("is-active");
+      }
+      activeIndex = -1;
+      svg.style("cursor", null);
+      hideTooltip();
+    };
+    const openActive = () => {
+      const r = sorted[activeIndex];
+      const href = r ? safeHref(r.link || r.final_url || "") : null;
+      if (href) window.open(href, "_blank", "noopener");
+    };
+
+    svg.on("pointermove", (event) => {
+      const [mx, my] = d3.pointer(event);
+      const index = delaunay.find(mx, my);
+      const r = sorted[index];
+      if (!r || Math.hypot(px(r) - mx, py(r) - my) > 36) {
+        deactivate();
+        return;
+      }
+      svg.style("cursor", "pointer");
+      activate(index, event.clientX, event.clientY);
+    });
+    svg.on("pointerleave", deactivate);
+    svg.on("click", openActive);
+    svg.on("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openActive();
+        return;
+      }
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      const from =
+        activeIndex < 0 ? (step > 0 ? -1 : sorted.length) : activeIndex;
+      const next = Math.max(0, Math.min(sorted.length - 1, from + step));
+      const r = sorted[next];
+      const [cx, cy] = clientPoint(svg.node(), px(r), py(r));
+      activate(next, cx, cy);
+    });
+    svg.on("blur", deactivate);
+  });
+
+  const tableCap = 400;
+  const tableRows = sorted
+    .slice(0, tableCap)
+    .map((r) => [
+      `#${r.search_rank}`,
+      (r.page_title || r.title || r.link || "(untitled)").slice(0, 90),
+      r._domain,
+      formatNumber(r.word_count),
+    ]);
+  if (sorted.length > tableCap) {
+    tableRows.push([
+      "",
+      `...and ${formatNumber(sorted.length - tableCap)} more (see the Results tab)`,
+      "",
+      "",
+    ]);
+  }
+  appendChartTable(
+    card,
+    [
+      { label: "Rank", num: true },
+      { label: "Page" },
+      { label: "Domain" },
+      { label: "Words", num: true },
+    ],
+    tableRows,
+  );
+
+  return card;
+}
+
+function buildDomainTreemap(results) {
+  const byDomain = new Map();
+  for (const r of results) {
+    if (r.status !== "scraped" || !(Number(r.word_count) > 0)) continue;
+    const entry = byDomain.get(r._domain) || {
+      domain: r._domain,
+      words: 0,
+      pages: 0,
+    };
+    entry.words += Number(r.word_count);
+    entry.pages += 1;
+    byDomain.set(r._domain, entry);
+  }
+  const entries = [...byDomain.values()].sort((a, b) => b.words - a.words);
+  if (entries.length < 2) return null;
+
+  const MAX_CELLS = 18;
+  const nodes = entries
+    .slice(0, MAX_CELLS)
+    .map((e) => ({ ...e, other: false }));
+  const rest = entries.slice(MAX_CELLS);
+  if (rest.length) {
+    nodes.push({
+      domain: `Other (${formatNumber(rest.length)} domains)`,
+      words: d3.sum(rest, (e) => e.words),
+      pages: d3.sum(rest, (e) => e.pages),
+      other: true,
+    });
+  }
+  const totalWords = d3.sum(entries, (e) => e.words);
+
+  const { card, body } = vizCard("Words By Domain");
+
+  registerViz(card, body, (host, width) => {
+    const height = Math.max(240, Math.min(340, Math.round(width * 0.4)));
+    const root = d3.hierarchy({ children: nodes }).sum((d) => d.words || 0);
+    d3.treemap().size([width, height]).paddingInner(2).round(true)(root);
+
+    const svg = d3
+      .select(host)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("role", "img")
+      .attr(
+        "aria-label",
+        `Treemap of extracted words across ${formatNumber(entries.length)} domains.`,
+      );
+
+    for (const leaf of root.leaves()) {
+      const d = leaf.data;
+      const w = leaf.x1 - leaf.x0;
+      const h = leaf.y1 - leaf.y0;
+      const share = totalWords ? Math.round((d.words / totalWords) * 100) : 0;
+      const g = svg
+        .append("g")
+        .attr("class", "viz-cell-group")
+        .attr("transform", `translate(${leaf.x0},${leaf.y0})`)
+        .attr("tabindex", 0)
+        .attr(
+          "aria-label",
+          `${d.domain}: ${formatNumber(d.words)} words from ${formatNumber(d.pages)} ` +
+            `pages, ${share}% of the extracted text`,
+        );
+      g.append("rect")
+        .attr("class", d.other ? "viz-cell viz-cell-other" : "viz-cell")
+        .attr("width", w)
+        .attr("height", h)
+        .attr("rx", 3);
+
+      if (h >= 30 && w >= measureVizText(d.domain, VIZ_FONT_SEMIBOLD) + 14) {
+        g.append("text")
+          .attr("class", "viz-cell-label")
+          .attr("x", 7)
+          .attr("y", 17)
+          .text(d.domain);
+        const sub = `${formatCompact(d.words)} words`;
+        if (h >= 46 && w >= measureVizText(sub) + 14) {
+          g.append("text")
+            .attr("class", "viz-cell-sub")
+            .attr("x", 7)
+            .attr("y", 32)
+            .text(sub);
+        }
+      }
+
+      const tipRows = () => [
+        { value: formatCompact(d.words), label: "words extracted" },
+        {
+          value: formatNumber(d.pages),
+          label: d.pages === 1 ? "page scraped" : "pages scraped",
+        },
+        { value: `${share}%`, label: "of all extracted text" },
+      ];
+      g.on("pointermove", (event) =>
+        showTooltip(d.domain, tipRows(), event.clientX, event.clientY),
+      );
+      g.on("pointerleave", hideTooltip);
+      g.on("focus", () => {
+        const [cx, cy] = clientPoint(
+          svg.node(),
+          leaf.x0 + w / 2,
+          leaf.y0 + h / 2,
+        );
+        showTooltip(d.domain, tipRows(), cx, cy);
+      });
+      g.on("blur", hideTooltip);
+    }
+  });
+
+  appendChartTable(
+    card,
+    [
+      { label: "Domain" },
+      { label: "Pages", num: true },
+      { label: "Words", num: true },
+      { label: "Share", num: true },
+    ],
+    entries.map((e) => [
+      e.domain,
+      formatNumber(e.pages),
+      formatNumber(e.words),
+      `${totalWords ? ((e.words / totalWords) * 100).toFixed(1) : "0.0"}%`,
+    ]),
+  );
+
+  return card;
+}
+
+const STOPWORDS = new Set(
+  `a about above after again against all also am an and any are aren't as at be
+because been before being below between both but by can can't cannot could
+couldn't did didn't do does doesn't doing don't down during each few for from
+further get got had hadn't has hasn't have haven't having he he'd he'll he's her
+here here's hers herself him himself his how how's i i'd i'll i'm i've if in into
+is isn't it it's its itself just let's may me more most mustn't my myself new no
+nor not now of off on once one only or other ought our ours ourselves out over
+own per same shan't she she'd she'll she's should shouldn't so some such than
+that that's the their theirs them themselves then there there's these they
+they'd they'll they're they've this those through to too two under until up upon
+us use very via was wasn't we we'd we'll we're we've were weren't what what's
+when when's where where's which while who who's whom why why's will with won't
+would wouldn't you you'd you'll you're you've your yours yourself yourselves`
+    .split(/\s+/)
+    .filter(Boolean),
+);
+
+function computeTopTerms(results, limit) {
+  const pageCounts = new Map();
+  const totals = new Map();
+  let pagesWithText = 0;
+
+  for (const r of results) {
+    if (r.status !== "scraped" || !r._haytext) continue;
+    pagesWithText += 1;
+    const counts = new Map();
+    const tokens =
+      r._haytext.match(
+        /[a-z\u00e0-\u00f6\u00f8-\u00ff][a-z\u00e0-\u00f6\u00f8-\u00ff'\u2019-]{2,}/g,
+      ) || [];
+    for (const raw of tokens) {
+      const token = raw.replace(/\u2019/g, "'").replace(/^['-]+|['-]+$/g, "");
+      if (token.length < 3 || STOPWORDS.has(token)) continue;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+    for (const [term, count] of counts) {
+      pageCounts.set(term, (pageCounts.get(term) || 0) + 1);
+      totals.set(term, (totals.get(term) || 0) + count);
+    }
+  }
+
+  const terms = [...pageCounts.entries()]
+    .map(([term, pages]) => ({ term, pages, total: totals.get(term) || 0 }))
+    .sort((a, b) => b.pages - a.pages || b.total - a.total)
+    .slice(0, limit);
+  return { terms, pagesWithText };
+}
+
+function buildTopTermsChart(termData) {
+  const pagesWithText = termData.pagesWithText;
+  const terms = termData.terms.slice(0, 22);
+  if (pagesWithText < 2 || terms.length < 3) return null;
+
+  const { card, body } = vizCard("Top Terms In Scraped Text");
+
+  registerViz(card, body, (host, width) => {
+    const rowHeight = 24;
+    const marginTop = 4;
+    const labelWidth =
+      Math.min(
+        180,
+        Math.ceil(Math.max(...terms.map((t) => measureVizText(t.term)))),
+      ) + 16;
+    const height = marginTop + terms.length * rowHeight + 4;
+    const x = d3
+      .scaleLinear()
+      .domain([0, terms[0].pages])
+      .range([labelWidth, Math.max(labelWidth + 40, width - 56)]);
+
+    const svg = d3
+      .select(host)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("role", "img")
+      .attr(
+        "aria-label",
+        `Bar chart of the ${formatNumber(terms.length)} most common terms in scraped text.`,
+      );
+
+    terms.forEach((t, i) => {
+      const yTop = marginTop + i * rowHeight;
+      const yMid = yTop + rowHeight / 2;
+      const share = Math.round((t.pages / pagesWithText) * 100);
+      const g = svg
+        .append("g")
+        .attr("class", "viz-row")
+        .attr("tabindex", 0)
+        .attr(
+          "aria-label",
+          `${t.term}: on ${formatNumber(t.pages)} of ${formatNumber(pagesWithText)} pages, ` +
+            `${formatNumber(t.total)} occurrences`,
+        );
+      g.append("rect")
+        .attr("class", "viz-hit")
+        .attr("x", 0)
+        .attr("y", yTop)
+        .attr("width", width)
+        .attr("height", rowHeight);
+      g.append("text")
+        .attr("class", "viz-row-label")
+        .attr("x", labelWidth - 8)
+        .attr("y", yMid + 4)
+        .attr("text-anchor", "end")
+        .text(t.term);
+      const barWidth = Math.max(3, x(t.pages) - labelWidth);
+      g.append("path")
+        .attr("class", "viz-mark seg-accent")
+        .attr("d", roundedRightBarPath(labelWidth, yMid - 7, barWidth, 14, 4));
+      g.append("text")
+        .attr("class", "viz-row-value")
+        .attr("x", labelWidth + barWidth + 8)
+        .attr("y", yMid + 4)
+        .text(formatNumber(t.pages));
+
+      const tipRows = () => [
+        {
+          value: formatNumber(t.pages),
+          label: `of ${formatNumber(pagesWithText)} pages (${share}%)`,
+        },
+        { value: formatNumber(t.total), label: "total occurrences" },
+      ];
+      g.on("pointermove", (event) =>
+        showTooltip(t.term, tipRows(), event.clientX, event.clientY),
+      );
+      g.on("pointerleave", hideTooltip);
+      g.on("focus", () => {
+        const [cx, cy] = clientPoint(svg.node(), labelWidth + barWidth, yMid);
+        showTooltip(t.term, tipRows(), cx, cy);
+      });
+      g.on("blur", hideTooltip);
+    });
+  });
+
+  appendChartTable(
+    card,
+    [
+      { label: "Term" },
+      { label: "Pages", num: true },
+      { label: "% of pages", num: true },
+      { label: "Occurrences", num: true },
+    ],
+    terms.map((t) => [
+      t.term,
+      formatNumber(t.pages),
+      `${Math.round((t.pages / pagesWithText) * 100)}%`,
+      formatNumber(t.total),
+    ]),
+  );
+
+  return card;
+}
+
+function buildWordCloudChart(termData) {
+  if (!(d3.layout && d3.layout.cloud)) return null;
+  const pagesWithText = termData.pagesWithText;
+  const words = termData.terms.slice(0, 60);
+  if (pagesWithText < 2 || words.length < 5) return null;
+
+  const TOP_ACCENT = 8;
+  const { card, body } = vizCard("Word Cloud");
+
+  let drawGen = 0;
+  registerViz(card, body, (host, width) => {
+    const gen = ++drawGen;
+    const height = Math.max(240, Math.min(360, Math.round(width * 0.38)));
+    const maxPages = words[0].pages;
+    const minPages = words[words.length - 1].pages;
+    const size = d3
+      .scaleSqrt()
+      .domain([Math.max(1, minPages), Math.max(2, maxPages)])
+      .range([13, Math.max(26, Math.min(46, Math.round(width / 16)))]);
+
+    d3.layout
+      .cloud()
+      .size([width, height])
+      .words(
+        words.map((t, i) => ({
+          term: t.term,
+          pages: t.pages,
+          total: t.total,
+          rank: i,
+          size: Math.round(size(t.pages)),
+        })),
+      )
+      .padding(3)
+      .rotate(0)
+      .font('system-ui, -apple-system, "Segoe UI", sans-serif')
+      .fontWeight((d) => (d.rank < TOP_ACCENT ? 600 : 400))
+      .fontSize((d) => d.size)
+      .on("end", (placed) => {
+        if (gen !== drawGen) return;
+        const svg = d3
+          .select(host)
+          .append("svg")
+          .attr("width", width)
+          .attr("height", height)
+          .attr("role", "img")
+          .attr(
+            "aria-label",
+            `Word cloud of the ${formatNumber(placed.length)} most frequent terms ` +
+              `in scraped text; activate a word to search the results for it.`,
+          );
+        const g = svg
+          .append("g")
+          .attr("transform", `translate(${width / 2},${height / 2})`);
+
+        for (const w of placed) {
+          const share = Math.round((w.pages / pagesWithText) * 100);
+          const node = g
+            .append("text")
+            .attr(
+              "class",
+              w.rank < TOP_ACCENT ? "viz-cloud-word is-top" : "viz-cloud-word",
+            )
+            .attr("transform", `translate(${w.x},${w.y})`)
+            .attr("text-anchor", "middle")
+            .attr("tabindex", 0)
+            .attr("role", "button")
+            .attr(
+              "aria-label",
+              `${w.term}: on ${formatNumber(w.pages)} of ` +
+                `${formatNumber(pagesWithText)} pages; search results for this term`,
+            )
+            .style("font-size", `${w.size}px`)
+            .style("font-weight", w.rank < TOP_ACCENT ? "600" : "400")
+            .text(w.term);
+
+          const tipRows = () => [
+            {
+              value: formatNumber(w.pages),
+              label: `of ${formatNumber(pagesWithText)} pages (${share}%)`,
+            },
+            { value: formatNumber(w.total), label: "total occurrences" },
+            { value: "", label: "click to search the results" },
+          ];
+          const searchTerm = () => {
+            els.search.value = w.term;
+            state.search = w.term;
+            state.visibleCount = PAGE_SIZE;
+            applyFilters();
+            setTab("results");
+            hideTooltip();
+          };
+          node.on("pointermove", (event) =>
+            showTooltip(w.term, tipRows(), event.clientX, event.clientY),
+          );
+          node.on("pointerleave", hideTooltip);
+          node.on("click", searchTerm);
+          node.on("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              searchTerm();
+            }
+          });
+          node.on("focus", () => {
+            const rect = node.node().getBoundingClientRect();
+            showTooltip(
+              w.term,
+              tipRows(),
+              rect.left + rect.width / 2,
+              rect.bottom,
+            );
+          });
+          node.on("blur", hideTooltip);
+        }
+      })
+      .start();
+  });
+
+  appendChartTable(
+    card,
+    [
+      { label: "Term" },
+      { label: "Pages", num: true },
+      { label: "% of pages", num: true },
+      { label: "Occurrences", num: true },
+    ],
+    words.map((t) => [
+      t.term,
+      formatNumber(t.pages),
+      `${Math.round((t.pages / pagesWithText) * 100)}%`,
+      formatNumber(t.total),
+    ]),
+  );
+
+  return card;
+}
+
 function renderCharts() {
   els.charts.textContent = "";
-  const results = state.results;
+  clearCharts();
+  hideTooltip();
 
-  if (!results.length) {
+  if (!state.results.length) {
     els.charts.appendChild(
       el("p", "empty-state", "This run has no results to chart."),
     );
     return;
+  }
+
+  const results =
+    state.chartQuery === "all"
+      ? state.results
+      : state.results.filter((r) => r.query === state.chartQuery.slice(2));
+  if (!results.length) {
+    els.charts.appendChild(
+      el("p", "empty-state", "No results match this query."),
+    );
+    return;
+  }
+
+  const hasD3 = typeof window.d3 !== "undefined";
+  if (!hasD3) {
+    els.charts.appendChild(
+      el(
+        "p",
+        "empty-state",
+        "Interactive charts need vendor/d3.v7.min.js; showing the basic charts only.",
+      ),
+    );
   }
 
   const anyNotScraped = results.some((r) => r.status === "not_scraped");
@@ -798,15 +2098,42 @@ function renderCharts() {
     return [scraped, items.length - scraped];
   };
 
+  const add = (card) => {
+    if (card) els.charts.appendChild(card);
+  };
+
+  if (hasD3) add(buildTimelineChart(results, outcomeSeries));
+
   const queries = [...new Set(results.map((r) => r.query).filter(Boolean))];
   if (queries.length > 1) {
-    els.charts.appendChild(
+    add(
       buildBarChart({
         title: "Outcome By Query",
         series: outcomeSeries,
         rows: queries.map((query) => ({
           label: query,
           values: splitOf(results.filter((r) => r.query === query)),
+        })),
+      }),
+    );
+  }
+
+  if (hasD3) add(buildRankDepthChart(results, outcomeSeries));
+
+  const skipped = results.filter((r) => r.status === "skipped");
+  if (skipped.length) {
+    const byReason = new Map();
+    for (const item of skipped) {
+      byReason.set(item._reason, (byReason.get(item._reason) || 0) + 1);
+    }
+    const reasons = [...byReason.entries()].sort((a, b) => b[1] - a[1]);
+    add(
+      buildBarChart({
+        title: "Skip Reasons",
+        series: [{ key: "count", label: "Skipped results", cls: "seg-muted" }],
+        rows: reasons.map(([reason, count]) => ({
+          label: reason,
+          values: [count],
         })),
       }),
     );
@@ -820,27 +2147,25 @@ function renderCharts() {
   const domains = [...byDomain.entries()].sort(
     (a, b) => b[1].length - a[1].length,
   );
-  els.charts.appendChild(
-    buildDomainsChart(domains, outcomeSeries, splitOf, false),
-  );
+  add(buildDomainsChart(domains, outcomeSeries, splitOf, false));
 
-  const skipped = results.filter((r) => r.status === "skipped");
-  if (skipped.length) {
-    const byReason = new Map();
-    for (const item of skipped) {
-      byReason.set(item._reason, (byReason.get(item._reason) || 0) + 1);
+  if (hasD3) {
+    add(buildDomainTreemap(results));
+    add(buildWordHistogram(results));
+    add(buildRankWordsScatter(results, queries.length > 1));
+    const termData = computeTopTerms(results, 80);
+    add(buildTopTermsChart(termData));
+    add(buildWordCloudChart(termData));
+  }
+
+  if (!chartObserver) {
+    for (const rec of chartDrawers.values()) {
+      const width = rec.measure();
+      if (width >= VIZ_MIN_WIDTH && width !== rec.width) {
+        rec.width = width;
+        rec.draw(width);
+      }
     }
-    const reasons = [...byReason.entries()].sort((a, b) => b[1] - a[1]);
-    els.charts.appendChild(
-      buildBarChart({
-        title: "Skip Reasons",
-        series: [{ key: "count", label: "Skipped results", cls: "seg-muted" }],
-        rows: reasons.map(([reason, count]) => ({
-          label: reason,
-          values: [count],
-        })),
-      }),
-    );
   }
 }
 
@@ -962,6 +2287,11 @@ function init() {
       applyFilters();
     }, 150),
   );
+
+  els.chartQueryFilter.addEventListener("change", () => {
+    state.chartQuery = els.chartQueryFilter.value;
+    renderCharts();
+  });
 
   for (const [element, key] of [
     [els.queryFilter, "query"],

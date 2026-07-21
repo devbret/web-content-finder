@@ -91,7 +91,7 @@
             <input
               type="search"
               id="search"
-              placeholder="Filter by title, URL or description…"
+              placeholder="Filter by title, URL or description..."
             />
             <select id="query-filter" title="Filter by query"></select>
             <select id="status-filter" title="Filter by status">
@@ -127,6 +127,12 @@
           aria-labelledby="tab-overview"
           hidden
         >
+          <div id="chart-controls" class="controls chart-controls" hidden>
+            <select
+              id="chart-query-filter"
+              title="Scope analytics to a query"
+            ></select>
+          </div>
           <div id="charts" class="charts"></div>
         </section>
 
@@ -143,6 +149,8 @@
     </main>
 
     <div id="tooltip" class="tooltip" role="status" hidden></div>
+    <script src="vendor/d3.v7.min.js"></script>
+    <script src="vendor/d3.layout.cloud.js"></script>
     <script src="main.js"></script>
   </body>
 </html>
