@@ -1,6 +1,6 @@
 # Web Content Finder
 
-![Screenshot of frontend displaying data from recent searches.](https://hosting.photobucket.com/bbcfb0d4-be20-44a0-94dc-65bff8947cf2/d4dde688-7baf-4fd0-a87d-ac5b4fbcd88b.png)
+![Screenshot of frontend displaying data from recent searches.](https://hosting.photobucket.com/bbcfb0d4-be20-44a0-94dc-65bff8947cf2/517ce960-11ff-49e5-a150-df7b42be0d6a.png)
 
 Searches Google's Programmable Search Engine for your query, visits each result's landing page, scrapes the readable text and saves it all to an `output` folder.
 

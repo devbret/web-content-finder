@@ -12,6 +12,12 @@
   --accent-wash: rgba(42, 120, 214, 0.1);
   --accent-soft: rgba(42, 120, 214, 0.16);
   --series-muted: #a8a69e;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
   --good-text: #006300;
   --good-wash: rgba(12, 163, 12, 0.12);
   --warn-text: #8a5a00;
@@ -34,6 +40,12 @@
     --accent-wash: rgba(57, 135, 229, 0.16);
     --accent-soft: rgba(57, 135, 229, 0.28);
     --series-muted: #565550;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
     --good-text: #0ca30c;
     --good-wash: rgba(12, 163, 12, 0.16);
     --warn-text: #fab219;
@@ -56,6 +68,12 @@
   --accent-wash: rgba(57, 135, 229, 0.16);
   --accent-soft: rgba(57, 135, 229, 0.28);
   --series-muted: #565550;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
   --good-text: #0ca30c;
   --good-wash: rgba(12, 163, 12, 0.16);
   --warn-text: #fab219;
@@ -116,14 +134,84 @@ main {
   flex-wrap: wrap;
 }
 
-.run-select {
+.run-picker {
+  position: relative;
+}
+
+.run-picker-toggle {
   max-width: 17rem;
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-picker-toggle[aria-expanded="true"] {
+  background: var(--accent-wash);
   color: var(--ink);
-  font-size: 0.88rem;
+}
+
+.run-picker-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 20;
+  width: 19rem;
+  min-width: 100%;
+  max-width: calc(100vw - 2rem);
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.16);
+}
+
+.run-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.45rem 0.4rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.run-option:hover {
+  background: var(--accent-wash);
+}
+
+.run-option input {
+  margin: 0.25rem 0 0;
+  accent-color: var(--accent);
+}
+
+.run-option .run-dot {
+  margin-top: 0.45rem;
+}
+
+.run-option-info {
+  min-width: 0;
+}
+
+.run-option-title {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.run-picker-note {
+  margin: 0.4rem 0.4rem 0.1rem;
+  font-size: 0.78rem;
+  color: var(--danger-text);
+}
+
+.run-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--grid);
 }
 
 .file-button {
@@ -158,7 +246,7 @@ main {
   color: var(--ink);
 }
 
-.run-select:focus-visible,
+.run-option input:focus-visible,
 .ghost-button:focus-visible,
 .controls input:focus-visible,
 .controls select:focus-visible,
@@ -412,6 +500,31 @@ main {
 .badge-query {
   background: var(--accent-wash);
   color: var(--accent);
+}
+
+.badge-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--grid);
+  color: var(--ink-2);
+}
+
+.run-breakdown {
+  margin-top: 0.75rem;
+  padding: 0.3rem 0.9rem 0.55rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+}
+
+.run-breakdown .data-table td:first-child {
+  white-space: nowrap;
+}
+
+.run-breakdown .run-dot {
+  margin-right: 0.4rem;
+  vertical-align: 1px;
 }
 
 .card-error {
@@ -734,6 +847,12 @@ main {
   font-size: 0.78rem;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
+}
+
+.chart-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 .chart-footer {
