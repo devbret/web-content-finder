@@ -3,22 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Web Content Finder - Results Explorer</title>
+    <title>Web Content Explorer</title>
     <link rel="stylesheet" href="main.css" />
   </head>
   <body>
     <header class="site-header">
       <div class="site-title">
-        <h1>Web Content Finder</h1>
-        <p class="subtitle" id="source-label">Results explorer</p>
+        <h1>Web Content Explorer</h1>
       </div>
       <div class="header-actions">
-        <select
-          id="run-select"
-          class="run-select"
-          title="Choose a run"
-          hidden
-        ></select>
+        <div id="run-picker" class="run-picker" hidden>
+          <button
+            type="button"
+            id="run-picker-toggle"
+            class="ghost-button run-picker-toggle"
+            aria-haspopup="true"
+            aria-expanded="false"
+            title="Choose one run, or several to compare"
+          >
+            Choose runs&hellip;
+          </button>
+          <div id="run-picker-menu" class="run-picker-menu" hidden>
+            <div id="run-picker-list" class="run-picker-list"></div>
+            <p id="run-picker-note" class="run-picker-note" hidden></p>
+          </div>
+        </div>
         <button
           type="button"
           id="theme-toggle"
@@ -49,6 +58,7 @@
 
       <section id="dashboard" hidden>
         <div id="summary" class="summary"></div>
+        <div id="run-breakdown" class="run-breakdown" hidden></div>
 
         <nav class="tabs" role="tablist" aria-label="Sections">
           <button
@@ -93,6 +103,7 @@
               id="search"
               placeholder="Filter by title, URL or description..."
             />
+            <select id="run-filter" title="Filter by run" hidden></select>
             <select id="query-filter" title="Filter by query"></select>
             <select id="status-filter" title="Filter by status">
               <option value="all">All statuses</option>
@@ -129,8 +140,14 @@
         >
           <div id="chart-controls" class="controls chart-controls" hidden>
             <select
+              id="chart-run-filter"
+              title="Scope analytics to a run"
+              hidden
+            ></select>
+            <select
               id="chart-query-filter"
               title="Scope analytics to a query"
+              hidden
             ></select>
           </div>
           <div id="charts" class="charts"></div>

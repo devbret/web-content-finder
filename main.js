@@ -4,15 +4,24 @@ const PAGE_SIZE = 50;
 const TOP_DOMAINS = 8;
 const THEMES = ["auto", "light", "dark"];
 
+const MAX_RUN_COLORS = 6;
+
 const state = {
   runs: [],
+  selectedRunIds: [],
+  loadedRuns: [],
+  multiRun: false,
+  manualSource: null,
   results: [],
   summary: null,
   errors: null,
   errorsNote: "",
+  errorsMissingRuns: [],
   search: "",
   query: "all",
+  runFilter: "all",
   chartQuery: "all",
+  chartRun: "all",
   status: "all",
   sort: "rank",
   visibleCount: PAGE_SIZE,
@@ -24,9 +33,15 @@ const state = {
 const els = {
   dropZone: document.getElementById("drop-zone"),
   fileInput: document.getElementById("file-input"),
-  runSelect: document.getElementById("run-select"),
+  runPicker: document.getElementById("run-picker"),
+  runPickerToggle: document.getElementById("run-picker-toggle"),
+  runPickerMenu: document.getElementById("run-picker-menu"),
+  runPickerList: document.getElementById("run-picker-list"),
+  runPickerNote: document.getElementById("run-picker-note"),
+  runBreakdown: document.getElementById("run-breakdown"),
+  runFilter: document.getElementById("run-filter"),
+  chartRunFilter: document.getElementById("chart-run-filter"),
   themeToggle: document.getElementById("theme-toggle"),
-  sourceLabel: document.getElementById("source-label"),
   dashboard: document.getElementById("dashboard"),
   summary: document.getElementById("summary"),
   tabs: document.querySelectorAll(".tabs [role='tab']"),
@@ -172,6 +187,16 @@ function parsePayload(payload) {
   };
 }
 
+function renderAll() {
+  renderSummary();
+  renderRunBreakdown();
+  populateQueryFilter();
+  populateRunFilters();
+  applyFilters();
+  renderCharts();
+  renderErrors();
+}
+
 function loadData(payload, sourceName, options = {}) {
   const { results, summary } = parsePayload(payload);
 
@@ -180,17 +205,15 @@ function loadData(payload, sourceName, options = {}) {
   state.errors = options.errors ?? null;
   state.errorsNote =
     options.errorsNote || "The search-errors file could not be loaded.";
+  state.errorsMissingRuns = [];
+  state.loadedRuns = [];
+  state.multiRun = false;
   state.visibleCount = PAGE_SIZE;
 
-  els.sourceLabel.textContent = sourceName;
   els.dropZone.hidden = true;
   els.dashboard.hidden = false;
 
-  renderSummary();
-  populateQueryFilter();
-  applyFilters();
-  renderCharts();
-  renderErrors();
+  renderAll();
 }
 
 function loadFromFile(file) {
@@ -221,30 +244,147 @@ function runLabel(run) {
   return total != null ? `${when} - ${formatNumber(total)} results` : when;
 }
 
-function populateRunSelect(runs) {
+function runShortLabel(run) {
+  const date = run.generated_at ? new Date(run.generated_at) : null;
+  if (date && !Number.isNaN(date.getTime())) {
+    return date.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  return run.id || run.dir;
+}
+
+function runById(id) {
+  return state.runs.find((run) => run.id === id) || null;
+}
+
+const runColorSlots = new Map();
+
+function assignRunSlot(id) {
+  if (runColorSlots.has(id)) return;
+  const used = new Set(runColorSlots.values());
+  for (let slot = 1; slot <= MAX_RUN_COLORS; slot += 1) {
+    if (!used.has(slot)) {
+      runColorSlots.set(id, slot);
+      return;
+    }
+  }
+  runColorSlots.set(id, 0);
+}
+
+function runColorVar(id) {
+  const slot = runColorSlots.get(id);
+  return slot ? `var(--series-${slot})` : "var(--series-muted)";
+}
+
+function runColorValue(id) {
+  const slot = runColorSlots.get(id);
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue(slot ? `--series-${slot}` : "--series-muted")
+    .trim();
+}
+
+function buildRunPicker(runs) {
   state.runs = runs;
-  els.runSelect.textContent = "";
+  els.runPickerList.textContent = "";
 
-  runs.forEach((run, index) => {
-    const option = el("option", "", runLabel(run));
-    option.value = String(index);
-    els.runSelect.appendChild(option);
-  });
+  for (const run of runs) {
+    const row = el("label", "run-option");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = run.id;
+    checkbox.addEventListener("change", () =>
+      setRunSelected(run.id, checkbox.checked),
+    );
+    row.appendChild(checkbox);
+    row.appendChild(el("span", "run-dot"));
 
-  els.runSelect.hidden = false;
+    const info = el("span", "run-option-info");
+    info.appendChild(el("span", "run-option-title", runLabel(run)));
+    row.appendChild(info);
+    els.runPickerList.appendChild(row);
+  }
+
+  els.runPicker.hidden = false;
+}
+
+function updateRunPickerUI() {
+  const selected = new Set(state.selectedRunIds);
+  for (const row of els.runPickerList.querySelectorAll(".run-option")) {
+    const checkbox = row.querySelector("input");
+    const dot = row.querySelector(".run-dot");
+    const isSelected = selected.has(checkbox.value);
+    checkbox.checked = isSelected;
+    dot.style.background = isSelected ? runColorVar(checkbox.value) : "";
+  }
+
+  let label;
+  if (state.manualSource) {
+    label = `File: ${state.manualSource}`;
+  } else if (!selected.size) {
+    label = "Choose runs…";
+  } else if (selected.size === 1) {
+    const run = runById(state.selectedRunIds[0]);
+    label = run ? runShortLabel(run) : "1 run selected";
+  } else {
+    label = `${selected.size} runs selected`;
+  }
+  els.runPickerToggle.textContent = label;
+}
+
+function setRunMenuOpen(open) {
+  els.runPickerMenu.hidden = !open;
+  els.runPickerToggle.setAttribute("aria-expanded", String(open));
+}
+
+function setPickerNote(message) {
+  els.runPickerNote.textContent = message;
+  els.runPickerNote.hidden = !message;
+}
+
+function setRunSelected(id, selected) {
+  state.manualSource = null;
+  const current = new Set(state.selectedRunIds);
+  if (selected) current.add(id);
+  else current.delete(id);
+  state.selectedRunIds = state.runs
+    .filter((run) => current.has(run.id))
+    .map((run) => run.id);
+
+  if (selected) assignRunSlot(id);
+  else runColorSlots.delete(id);
+
+  setPickerNote("");
+  updateRunPickerUI();
+  applySelection();
 }
 
 function markManualSource(name) {
-  if (els.runSelect.hidden) return;
+  state.manualSource = name;
+  state.selectedRunIds = [];
+  runColorSlots.clear();
+  syncRunsParam();
+  updateRunPickerUI();
+}
 
-  let option = els.runSelect.querySelector('option[value="manual"]');
-  if (!option) {
-    option = el("option");
-    option.value = "manual";
-    els.runSelect.prepend(option);
+function syncRunsParam() {
+  const params = new URLSearchParams(window.location.search);
+  if (state.selectedRunIds.length && !state.manualSource) {
+    params.set("runs", state.selectedRunIds.join(","));
+  } else {
+    params.delete("runs");
   }
-  option.textContent = `Loaded file: ${name}`;
-  els.runSelect.value = "manual";
+  const query = params.toString();
+  try {
+    history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}`,
+    );
+  } catch {}
 }
 
 function errorsFileFor(run) {
@@ -255,29 +395,152 @@ function errorsFileFor(run) {
   return null;
 }
 
-async function selectRun(run) {
+const runCache = new Map();
+
+function loadRun(run) {
+  if (!runCache.has(run.id)) {
+    const promise = fetchRun(run).catch((err) => {
+      runCache.delete(run.id);
+      throw err;
+    });
+    runCache.set(run.id, promise);
+  }
+  return runCache.get(run.id);
+}
+
+async function fetchRun(run) {
   const base = `${OUTPUT_BASE_URL}${encodeURIComponent(run.dir)}/`;
-  const manifestUrl = base + encodeURIComponent(run.manifest);
+  const payload = await fetchJson(base + encodeURIComponent(run.manifest));
+  const { results, summary } = parsePayload(payload);
+  const label = runShortLabel(run);
+  for (const item of results) {
+    item._runId = run.id;
+    item._runLabel = label;
+  }
+
+  let errors = null;
+  const errorsFile = errorsFileFor(run);
+  if (errorsFile) {
+    try {
+      const parsed = await fetchJson(base + encodeURIComponent(errorsFile));
+      if (Array.isArray(parsed)) {
+        errors = parsed.filter((err) => err && typeof err === "object");
+        for (const err of errors) {
+          err._runId = run.id;
+          err._runLabel = label;
+        }
+      }
+    } catch {}
+  }
+
+  return { run, results, summary, errors };
+}
+
+function combineSummaries(loaded) {
+  const combined = {
+    total_results: 0,
+    scraped: 0,
+    skipped: 0,
+    total_words: 0,
+    search_error_count: 0,
+    generated_at: null,
+  };
+  let newest = -Infinity;
+  for (const { summary, results } of loaded) {
+    const s = summary || {};
+    combined.total_results += s.total_results ?? results.length;
+    combined.scraped +=
+      s.scraped ?? results.filter((r) => r.status === "scraped").length;
+    combined.skipped +=
+      s.skipped ?? results.filter((r) => r.status === "skipped").length;
+    combined.total_words +=
+      s.total_words ?? results.reduce((sum, r) => sum + (r.word_count || 0), 0);
+    combined.search_error_count += s.search_error_count ?? 0;
+    const time = s.generated_at ? Date.parse(s.generated_at) : NaN;
+    if (Number.isFinite(time) && time > newest) {
+      newest = time;
+      combined.generated_at = s.generated_at;
+    }
+  }
+  return combined;
+}
+
+let selectionGen = 0;
+
+async function applySelection() {
+  const gen = ++selectionGen;
+  syncRunsParam();
+
+  if (!state.selectedRunIds.length) {
+    if (!state.manualSource) {
+      state.results = [];
+      state.loadedRuns = [];
+      state.multiRun = false;
+      els.dashboard.hidden = true;
+      els.dropZone.hidden = false;
+    }
+    return;
+  }
 
   els.dashboard.classList.add("loading");
-  try {
-    const payload = await fetchJson(manifestUrl);
+  const runs = state.selectedRunIds.map((id) => runById(id)).filter(Boolean);
+  const settled = await Promise.allSettled(runs.map((run) => loadRun(run)));
+  if (gen !== selectionGen) return;
+  els.dashboard.classList.remove("loading");
 
-    let errors = null;
-    const errorsFile = errorsFileFor(run);
-    if (errorsFile) {
-      try {
-        const parsed = await fetchJson(base + encodeURIComponent(errorsFile));
-        if (Array.isArray(parsed)) errors = parsed;
-      } catch {}
-    }
+  const loaded = [];
+  const failed = [];
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") loaded.push(result.value);
+    else failed.push(runs[index]);
+  });
 
-    loadData(payload, `${run.dir}/${run.manifest}`, { errors });
-  } catch (err) {
-    showLoadError(`Could not load ${run.dir}/${run.manifest}: ${err.message}`);
-  } finally {
-    els.dashboard.classList.remove("loading");
+  if (failed.length) {
+    const failedIds = new Set(failed.map((run) => run.id));
+    state.selectedRunIds = state.selectedRunIds.filter(
+      (id) => !failedIds.has(id),
+    );
+    for (const id of failedIds) runColorSlots.delete(id);
+    updateRunPickerUI();
+    setPickerNote(
+      `Could not load: ${failed.map((run) => runShortLabel(run)).join(", ")}`,
+    );
+    syncRunsParam();
   }
+
+  if (!loaded.length) {
+    els.dashboard.hidden = true;
+    els.dropZone.hidden = false;
+    return;
+  }
+
+  showCombinedRuns(loaded);
+}
+
+function showCombinedRuns(loaded) {
+  const multi = loaded.length > 1;
+  state.multiRun = multi;
+  state.loadedRuns = loaded;
+  state.results = loaded.flatMap((entry) => entry.results);
+  state.summary = multi ? combineSummaries(loaded) : loaded[0].summary;
+
+  const withErrors = loaded.filter((entry) => entry.errors);
+  state.errors = withErrors.length
+    ? loaded.flatMap((entry) => entry.errors || [])
+    : null;
+  state.errorsNote = "The search-errors file could not be loaded.";
+  state.errorsMissingRuns =
+    withErrors.length && withErrors.length < loaded.length
+      ? loaded
+          .filter((entry) => !entry.errors)
+          .map((entry) => runShortLabel(entry.run))
+      : [];
+  state.visibleCount = PAGE_SIZE;
+
+  els.dropZone.hidden = true;
+  els.dashboard.hidden = false;
+
+  renderAll();
 }
 
 async function tryAutoLoad() {
@@ -286,10 +549,28 @@ async function tryAutoLoad() {
   try {
     const index = await fetchJson(RUNS_INDEX_URL);
     const runs = (index.runs || []).filter((run) => run.dir && run.manifest);
-    if (runs.length) {
-      populateRunSelect(runs);
-      await selectRun(runs[0]);
+    for (const run of runs) {
+      if (!run.id) run.id = run.dir;
     }
+    if (!runs.length) return;
+
+    buildRunPicker(runs);
+
+    const requested = (
+      new URLSearchParams(window.location.search).get("runs") || ""
+    )
+      .split(",")
+      .filter(Boolean);
+    const available = new Set(runs.map((run) => run.id));
+    const valid = requested.filter((id) => available.has(id));
+    const wanted = new Set(valid.length ? valid : [runs[0].id]);
+    state.selectedRunIds = runs
+      .filter((run) => wanted.has(run.id))
+      .map((run) => run.id);
+
+    for (const id of state.selectedRunIds) assignRunSlot(id);
+    updateRunPickerUI();
+    await applySelection();
   } catch {}
 }
 
@@ -317,13 +598,16 @@ function renderSummary() {
   const domains = new Set(results.map((r) => r._domain)).size;
   const rate = total ? Math.round((scraped / total) * 100) : 0;
 
+  if (state.multiRun) {
+    addStat(formatNumber(state.loadedRuns.length), "Runs compared");
+  }
   addStat(formatNumber(total), "Results");
   addStat(formatNumber(scraped), "Scraped", `${rate}% of results`);
   addStat(formatNumber(skipped), "Skipped");
   addStat(formatCompact(words), "Words extracted");
   addStat(formatNumber(domains), "Unique domains");
 
-  if (summary.generated_at) {
+  if (!state.multiRun && summary.generated_at) {
     const generated = new Date(summary.generated_at);
     if (!Number.isNaN(generated.getTime())) {
       addStat(
@@ -339,6 +623,62 @@ function renderSummary() {
       );
     }
   }
+}
+
+function renderRunBreakdown() {
+  const box = els.runBreakdown;
+  box.textContent = "";
+  box.hidden = !state.multiRun;
+  if (!state.multiRun) return;
+
+  const scroll = el("div", "table-scroll");
+  const table = el("table", "data-table");
+  const thead = el("thead");
+  const headRow = el("tr");
+  const headers = [
+    { label: "Run" },
+    { label: "Queries" },
+    { label: "Results", num: true },
+    { label: "Scraped", num: true },
+    { label: "Skipped", num: true },
+    { label: "Words", num: true },
+  ];
+  for (const h of headers) {
+    headRow.appendChild(el("th", h.num ? "num" : "", h.label));
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  for (const entry of state.loadedRuns) {
+    const { run, results } = entry;
+    const s = entry.summary || {};
+    const scraped =
+      s.scraped ?? results.filter((r) => r.status === "scraped").length;
+    const skipped =
+      s.skipped ?? results.filter((r) => r.status === "skipped").length;
+    const words =
+      s.total_words ?? results.reduce((sum, r) => sum + (r.word_count || 0), 0);
+
+    const tr = el("tr");
+    const runCell = el("td");
+    const dot = el("span", "run-dot");
+    dot.style.background = runColorVar(run.id);
+    runCell.appendChild(dot);
+    runCell.appendChild(document.createTextNode(runShortLabel(run)));
+    tr.appendChild(runCell);
+    tr.appendChild(el("td", "", (run.queries || []).join(", ")));
+    tr.appendChild(
+      el("td", "num", formatNumber(s.total_results ?? results.length)),
+    );
+    tr.appendChild(el("td", "num", formatNumber(scraped)));
+    tr.appendChild(el("td", "num", formatNumber(skipped)));
+    tr.appendChild(el("td", "num", formatCompact(words)));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  box.appendChild(scroll);
 }
 
 function setTab(name) {
@@ -385,7 +725,8 @@ function populateQueryFilter() {
 
   fill(els.queryFilter);
   fill(els.chartQueryFilter);
-  els.chartControls.hidden = queries.length < 2;
+  els.chartQueryFilter.hidden = queries.length < 2;
+  els.chartControls.hidden = queries.length < 2 && !state.multiRun;
 
   state.query = "all";
   state.chartQuery = "all";
@@ -393,6 +734,32 @@ function populateQueryFilter() {
   els.statusFilter.value = "all";
   state.search = "";
   els.search.value = "";
+}
+
+function populateRunFilters() {
+  const multi = state.multiRun;
+  const fill = (select) => {
+    select.textContent = "";
+    const allOption = el(
+      "option",
+      "",
+      `All ${formatNumber(state.loadedRuns.length)} runs`,
+    );
+    allOption.value = "all";
+    select.appendChild(allOption);
+    for (const entry of state.loadedRuns) {
+      const option = el("option", "", runShortLabel(entry.run));
+      option.value = entry.run.id;
+      select.appendChild(option);
+    }
+    select.value = "all";
+    select.hidden = !multi;
+  };
+
+  fill(els.runFilter);
+  fill(els.chartRunFilter);
+  state.runFilter = "all";
+  state.chartRun = "all";
 }
 
 function matchesSearch(item, needle) {
@@ -404,6 +771,8 @@ function applyFilters() {
   const needle = state.search.trim().toLowerCase();
 
   const items = state.results.filter((item) => {
+    if (state.runFilter !== "all" && item._runId !== state.runFilter)
+      return false;
     if (state.query !== "all" && item.query !== state.query.slice(2))
       return false;
     if (state.status !== "all" && item.status !== state.status) return false;
@@ -532,6 +901,14 @@ function buildCard(item) {
 
   const status = item.status || "unknown";
   addMetaBadge(meta, status.replace("_", " "), `badge-${status}`);
+  if (state.multiRun && item._runLabel) {
+    const badge = el("span", "badge badge-run");
+    const dot = el("span", "run-dot");
+    dot.style.background = runColorVar(item._runId);
+    badge.appendChild(dot);
+    badge.appendChild(document.createTextNode(item._runLabel));
+    meta.appendChild(badge);
+  }
   if (item.query) addMetaBadge(meta, item.query, "badge-query");
   if (url) meta.appendChild(el("span", "", item._domain));
   if (item.status === "scraped") {
@@ -1183,6 +1560,238 @@ function buildTimelineChart(results, series) {
       (p.item.status || "unknown").replace("_", " "),
       formatNumber(p.scraped),
       formatNumber(p.rest),
+    ]),
+  );
+
+  return card;
+}
+
+function buildRunPaceChart(runSets) {
+  const slotted = runSets.filter((set) => runColorSlots.get(set.run.id));
+  const seriesData = slotted
+    .map((set) => {
+      const times = set.results
+        .map((r) => Date.parse(r.fetched_at || ""))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      if (times.length < 2) return null;
+      const t0 = times[0];
+      const points = times.map((time, i) => ({
+        seconds: (time - t0) / 1000,
+        count: i + 1,
+      }));
+      return {
+        run: set.run,
+        label: runShortLabel(set.run),
+        points,
+        total: times.length,
+        duration: points[points.length - 1].seconds,
+        scraped: set.results.filter((r) => r.status === "scraped").length,
+      };
+    })
+    .filter(Boolean);
+  if (seriesData.length < 2) return null;
+
+  const maxDuration = Math.max(1, ...seriesData.map((s) => s.duration));
+  const maxTotal = Math.max(1, ...seriesData.map((s) => s.total));
+
+  const { card, body } = vizCard("Fetch Pace By Run");
+
+  const legend = el("div", "chart-legend");
+  for (const s of seriesData) {
+    const item = el("span", "legend-item");
+    const swatch = el("span", "legend-swatch");
+    swatch.style.background = runColorVar(s.run.id);
+    item.appendChild(swatch);
+    item.appendChild(el("span", "", s.label));
+    legend.appendChild(item);
+  }
+  card.insertBefore(legend, body);
+
+  registerViz(card, body, (host, width) => {
+    const height = 280;
+    const margin = { top: 16, right: 116, bottom: 48, left: 46 };
+    const x = d3
+      .scaleLinear()
+      .domain([0, maxDuration])
+      .range([margin.left, width - margin.right]);
+    const y = d3
+      .scaleLinear()
+      .domain([0, maxTotal])
+      .nice()
+      .range([height - margin.bottom, margin.top]);
+
+    const svg = d3
+      .select(host)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("role", "img")
+      .attr("tabindex", 0)
+      .attr(
+        "aria-label",
+        `Cumulative pages fetched over elapsed time for ${formatNumber(
+          seriesData.length,
+        )} runs, aligned to each run's start. Use arrow keys to step through time.`,
+      );
+
+    drawYAxisGrid(svg, y, { left: margin.left, right: width - margin.right });
+    const seen = new Set();
+    const timeTicks = x
+      .ticks(Math.max(3, Math.min(8, Math.floor(width / 90))))
+      .filter((t) => {
+        const label = formatElapsed(t);
+        if (seen.has(label)) return false;
+        seen.add(label);
+        return true;
+      });
+    drawXAxis(svg, x, {
+      y: height - margin.bottom,
+      tickValues: timeTicks,
+      format: formatElapsed,
+    });
+    drawBaseline(svg, margin.left, width - margin.right, y(0));
+    svg
+      .append("text")
+      .attr("class", "viz-axis-title")
+      .attr("x", (margin.left + width - margin.right) / 2)
+      .attr("y", height - 6)
+      .attr("text-anchor", "middle")
+      .text("Elapsed since run start");
+
+    for (const s of seriesData) {
+      const gen = d3
+        .line()
+        .x((p) => x(p.seconds))
+        .y((p) => y(p.count))
+        .curve(d3.curveStepAfter);
+      svg
+        .append("path")
+        .attr("class", "viz-line")
+        .style("stroke", runColorVar(s.run.id))
+        .attr("d", gen([{ seconds: 0, count: 0 }, ...s.points]));
+    }
+
+    const endLabels = seriesData
+      .map((s) => ({ s, x: x(s.duration), y: y(s.total) }))
+      .sort((a, b) => a.y - b.y);
+    for (let i = 1; i < endLabels.length; i += 1) {
+      const prev = endLabels[i - 1];
+      const label = endLabels[i];
+      if (label.y - prev.y < 14 && Math.abs(label.x - prev.x) < 90) {
+        label.y = prev.y + 14;
+      }
+    }
+    for (const { s, x: endX, y: labelY } of endLabels) {
+      svg
+        .append("circle")
+        .attr("class", "viz-dot")
+        .style("fill", runColorVar(s.run.id))
+        .attr("cx", endX)
+        .attr("cy", y(s.total))
+        .attr("r", 4);
+      svg
+        .append("text")
+        .attr("class", "viz-end-label")
+        .attr("x", endX + 10)
+        .attr("y", labelY + 4)
+        .text(`${formatNumber(s.total)} · ${s.label}`);
+    }
+
+    const crosshair = svg
+      .append("line")
+      .attr("class", "viz-crosshair")
+      .attr("y1", margin.top)
+      .attr("y2", height - margin.bottom)
+      .attr("visibility", "hidden");
+    const hoverDots = seriesData.map((s) =>
+      svg
+        .append("circle")
+        .attr("class", "viz-dot")
+        .style("fill", runColorVar(s.run.id))
+        .attr("r", 4)
+        .attr("visibility", "hidden"),
+    );
+
+    const countBisect = d3.bisector((p) => p.seconds).right;
+    const allSeconds = [
+      ...new Set(seriesData.flatMap((s) => s.points.map((p) => p.seconds))),
+    ].sort((a, b) => a - b);
+    const timeBisect = d3.bisector((t) => t).center;
+    let focusIndex = -1;
+
+    const showAt = (index, clientX, clientY) => {
+      const seconds = allSeconds[index];
+      if (seconds === undefined) return;
+      const px = x(seconds);
+      crosshair.attr("x1", px).attr("x2", px).attr("visibility", "visible");
+      const rows = seriesData.map((s, i) => {
+        const count = Math.min(countBisect(s.points, seconds), s.total);
+        hoverDots[i]
+          .attr("cx", x(Math.min(seconds, s.duration)))
+          .attr("cy", y(count))
+          .attr("visibility", "visible");
+        return {
+          value: formatNumber(count),
+          label: seconds > s.duration ? `${s.label} (finished)` : s.label,
+          color: runColorValue(s.run.id),
+        };
+      });
+      showTooltip(formatElapsed(seconds), rows, clientX, clientY);
+    };
+    const hideHover = () => {
+      crosshair.attr("visibility", "hidden");
+      for (const dot of hoverDots) dot.attr("visibility", "hidden");
+      hideTooltip();
+    };
+
+    svg.on("pointermove", (event) => {
+      const [mx] = d3.pointer(event);
+      focusIndex = Math.max(
+        0,
+        Math.min(
+          allSeconds.length - 1,
+          timeBisect(allSeconds, x.invert(mx)),
+        ),
+      );
+      showAt(focusIndex, event.clientX, event.clientY);
+    });
+    svg.on("pointerleave", hideHover);
+    svg.on("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      const from =
+        focusIndex < 0 ? (step > 0 ? -1 : allSeconds.length) : focusIndex;
+      focusIndex = Math.max(0, Math.min(allSeconds.length - 1, from + step));
+      const [cx, cy] = clientPoint(
+        svg.node(),
+        x(allSeconds[focusIndex]),
+        margin.top + 12,
+      );
+      showAt(focusIndex, cx, cy);
+    });
+    svg.on("blur", () => {
+      focusIndex = -1;
+      hideHover();
+    });
+  });
+
+  appendChartTable(
+    card,
+    [
+      { label: "Run" },
+      { label: "Duration" },
+      { label: "Pages fetched", num: true },
+      { label: "Scraped", num: true },
+      { label: "Pages / min", num: true },
+    ],
+    seriesData.map((s) => [
+      s.label,
+      formatElapsed(s.duration),
+      formatNumber(s.total),
+      formatNumber(s.scraped),
+      s.duration > 0 ? (s.total / (s.duration / 60)).toFixed(1) : "",
     ]),
   );
 
@@ -2062,13 +2671,16 @@ function renderCharts() {
     return;
   }
 
-  const results =
-    state.chartQuery === "all"
-      ? state.results
-      : state.results.filter((r) => r.query === state.chartQuery.slice(2));
+  let results = state.results;
+  if (state.multiRun && state.chartRun !== "all") {
+    results = results.filter((r) => r._runId === state.chartRun);
+  }
+  if (state.chartQuery !== "all") {
+    results = results.filter((r) => r.query === state.chartQuery.slice(2));
+  }
   if (!results.length) {
     els.charts.appendChild(
-      el("p", "empty-state", "No results match this query."),
+      el("p", "empty-state", "No results match this scope."),
     );
     return;
   }
@@ -2102,7 +2714,42 @@ function renderCharts() {
     if (card) els.charts.appendChild(card);
   };
 
-  if (hasD3) add(buildTimelineChart(results, outcomeSeries));
+  const chartRuns = state.multiRun
+    ? state.loadedRuns.filter(
+        (entry) =>
+          state.chartRun === "all" || entry.run.id === state.chartRun,
+      )
+    : [];
+  const runSets = chartRuns
+    .map((entry) => ({
+      run: entry.run,
+      results:
+        state.chartQuery === "all"
+          ? entry.results
+          : entry.results.filter((r) => r.query === state.chartQuery.slice(2)),
+    }))
+    .filter((set) => set.results.length);
+  const compareRuns = runSets.length > 1;
+
+  if (hasD3) {
+    add(
+      (compareRuns && buildRunPaceChart(runSets)) ||
+        buildTimelineChart(results, outcomeSeries),
+    );
+  }
+
+  if (compareRuns) {
+    add(
+      buildBarChart({
+        title: "Outcome By Run",
+        series: outcomeSeries,
+        rows: runSets.map((set) => ({
+          label: runShortLabel(set.run),
+          values: splitOf(set.results),
+        })),
+      }),
+    );
+  }
 
   const queries = [...new Set(results.map((r) => r.query).filter(Boolean))];
   if (queries.length > 1) {
@@ -2185,6 +2832,18 @@ function renderErrors() {
     return;
   }
 
+  if (state.errorsMissingRuns.length) {
+    box.appendChild(
+      el(
+        "p",
+        "chart-note",
+        `Search errors could not be loaded for: ${state.errorsMissingRuns.join(
+          ", ",
+        )}.`,
+      ),
+    );
+  }
+
   if (!errors.length) {
     box.appendChild(
       el(
@@ -2196,11 +2855,14 @@ function renderErrors() {
     return;
   }
 
+  const showRun = state.multiRun;
   const scroll = el("div", "table-scroll");
   const table = el("table", "data-table");
   const thead = el("thead");
   const headRow = el("tr");
-  for (const heading of ["Query", "Page", "Type", "HTTP", "Message"]) {
+  const headings = ["Query", "Page", "Type", "HTTP", "Message"];
+  if (showRun) headings.unshift("Run");
+  for (const heading of headings) {
     headRow.appendChild(
       el("th", heading === "Page" || heading === "HTTP" ? "num" : "", heading),
     );
@@ -2212,6 +2874,7 @@ function renderErrors() {
   for (const err of errors) {
     if (!err || typeof err !== "object") continue;
     const tr = el("tr");
+    if (showRun) tr.appendChild(el("td", "", err._runLabel ?? ""));
     tr.appendChild(el("td", "", err.query ?? ""));
     tr.appendChild(el("td", "num", err.page_number ?? ""));
     tr.appendChild(el("td", "", err.error_type ?? ""));
@@ -2250,9 +2913,28 @@ function init() {
     setTab(requestedTab);
   }
 
-  els.runSelect.addEventListener("change", () => {
-    const run = state.runs[Number(els.runSelect.value)];
-    if (run) selectRun(run);
+  els.runPickerToggle.addEventListener("click", () => {
+    setRunMenuOpen(els.runPickerMenu.hidden);
+  });
+  document.addEventListener("click", (event) => {
+    if (!els.runPicker.contains(event.target)) setRunMenuOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.runPickerMenu.hidden) {
+      setRunMenuOpen(false);
+      els.runPickerToggle.focus();
+    }
+  });
+
+  els.runFilter.addEventListener("change", () => {
+    state.runFilter = els.runFilter.value;
+    state.visibleCount = PAGE_SIZE;
+    applyFilters();
+  });
+
+  els.chartRunFilter.addEventListener("change", () => {
+    state.chartRun = els.chartRunFilter.value;
+    renderCharts();
   });
 
   els.fileInput.addEventListener("change", () => {
