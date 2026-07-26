@@ -22,6 +22,7 @@ const state = {
   runFilter: "all",
   chartQuery: "all",
   chartRun: "all",
+  analysisSearch: "",
   status: "all",
   sort: "rank",
   visibleCount: PAGE_SIZE,
@@ -58,6 +59,10 @@ const els = {
   charts: document.getElementById("charts"),
   chartControls: document.getElementById("chart-controls"),
   chartQueryFilter: document.getElementById("chart-query-filter"),
+  analyzeButton: document.getElementById("analyze-button"),
+  analysisSearch: document.getElementById("analysis-search"),
+  analysisStatus: document.getElementById("analysis-status"),
+  analysisOutput: document.getElementById("analysis-output"),
   errorsContent: document.getElementById("errors-content"),
   tooltip: document.getElementById("tooltip"),
 };
@@ -304,6 +309,11 @@ function buildRunPicker(runs) {
 
     const info = el("span", "run-option-info");
     info.appendChild(el("span", "run-option-title", runLabel(run)));
+    if (Array.isArray(run.queries) && run.queries.length) {
+      info.appendChild(
+        el("span", "run-option-queries", run.queries.join(", ")),
+      );
+    }
     row.appendChild(info);
     els.runPickerList.appendChild(row);
   }
@@ -325,7 +335,7 @@ function updateRunPickerUI() {
   if (state.manualSource) {
     label = `File: ${state.manualSource}`;
   } else if (!selected.size) {
-    label = "Choose runs…";
+    label = "Choose runs...";
   } else if (selected.size === 1) {
     const run = runById(state.selectedRunIds[0]);
     label = run ? runShortLabel(run) : "1 run selected";
@@ -734,6 +744,8 @@ function populateQueryFilter() {
   els.statusFilter.value = "all";
   state.search = "";
   els.search.value = "";
+  state.analysisSearch = "";
+  els.analysisSearch.value = "";
 }
 
 function populateRunFilters() {
@@ -1695,7 +1707,7 @@ function buildRunPaceChart(runSets) {
         .attr("class", "viz-end-label")
         .attr("x", endX + 10)
         .attr("y", labelY + 4)
-        .text(`${formatNumber(s.total)} · ${s.label}`);
+        .text(`${formatNumber(s.total)} - ${s.label}`);
     }
 
     const crosshair = svg
@@ -1749,10 +1761,7 @@ function buildRunPaceChart(runSets) {
       const [mx] = d3.pointer(event);
       focusIndex = Math.max(
         0,
-        Math.min(
-          allSeconds.length - 1,
-          timeBisect(allSeconds, x.invert(mx)),
-        ),
+        Math.min(allSeconds.length - 1, timeBisect(allSeconds, x.invert(mx))),
       );
       showAt(focusIndex, event.clientX, event.clientY);
     });
@@ -2660,6 +2669,7 @@ function buildWordCloudChart(termData) {
 }
 
 function renderCharts() {
+  updateAnalysisButton();
   els.charts.textContent = "";
   clearCharts();
   hideTooltip();
@@ -2716,8 +2726,7 @@ function renderCharts() {
 
   const chartRuns = state.multiRun
     ? state.loadedRuns.filter(
-        (entry) =>
-          state.chartRun === "all" || entry.run.id === state.chartRun,
+        (entry) => state.chartRun === "all" || entry.run.id === state.chartRun,
       )
     : [];
   const runSets = chartRuns
@@ -2887,6 +2896,279 @@ function renderErrors() {
   box.appendChild(scroll);
 }
 
+const ANALYSIS_SENTINEL = "\u001e";
+const ANALYSIS_EXCERPT_CHARS = 1500;
+const ANALYSIS_MAX_PAGES = 400;
+let analysisRunning = false;
+
+function pagesInAnalysisScope() {
+  let results = state.results.filter((r) => r.status === "scraped" && r.text);
+  if (state.multiRun && state.chartRun !== "all") {
+    results = results.filter((r) => r._runId === state.chartRun);
+  }
+  if (state.chartQuery !== "all") {
+    results = results.filter((r) => r.query === state.chartQuery.slice(2));
+  }
+  const needle = state.analysisSearch.trim().toLowerCase();
+  if (needle) {
+    results = results.filter((r) => matchesSearch(r, needle));
+  }
+  return results;
+}
+
+function setAnalysisStatus(message) {
+  els.analysisStatus.textContent = message;
+}
+
+function updateAnalysisButton() {
+  if (!els.analyzeButton) return;
+  const count = pagesInAnalysisScope().length;
+  els.analyzeButton.textContent = analysisRunning
+    ? "Analyzing..."
+    : `Analyze ${formatNumber(count)} scraped ${count === 1 ? "page" : "pages"} with Claude`;
+  els.analyzeButton.disabled = !analysisRunning && count === 0;
+  els.analyzeButton.setAttribute("aria-busy", String(analysisRunning));
+}
+
+function appendInline(parent, text) {
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > last) {
+      parent.appendChild(
+        document.createTextNode(text.slice(last, match.index)),
+      );
+    }
+    const token = match[0];
+    if (token.startsWith("**")) {
+      parent.appendChild(el("strong", "", token.slice(2, -2)));
+    } else {
+      parent.appendChild(el("code", "", token.slice(1, -1)));
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) {
+    parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+}
+
+function renderMarkdownInto(container, text) {
+  container.textContent = "";
+  let list = null;
+  let paragraph = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const p = el("p");
+    appendInline(p, paragraph.join(" "));
+    container.appendChild(p);
+    paragraph = [];
+  };
+
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      list = null;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      list = null;
+      const h = el(heading[1].length <= 2 ? "h4" : "h5", "md-heading");
+      appendInline(h, heading[2]);
+      container.appendChild(h);
+      continue;
+    }
+
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    const numbered = line.match(/^(\d+)[.)]\s+(.*)$/);
+    if (bullet || numbered) {
+      flushParagraph();
+      const tag = numbered ? "OL" : "UL";
+      if (!list || list.tagName !== tag) {
+        list = el(tag.toLowerCase(), "md-list");
+        if (numbered) {
+          const start = parseInt(numbered[1], 10);
+          if (Number.isFinite(start) && start > 1) list.start = start;
+        }
+        container.appendChild(list);
+      }
+      const li = el("li");
+      appendInline(li, numbered ? numbered[2] : bullet[1]);
+      list.appendChild(li);
+      continue;
+    }
+
+    list = null;
+    paragraph.push(line);
+  }
+  flushParagraph();
+}
+
+async function runAnalysis() {
+  if (analysisRunning) return;
+  const inScope = pagesInAnalysisScope();
+  if (!inScope.length) return;
+  const pages = inScope.slice(0, ANALYSIS_MAX_PAGES);
+
+  analysisRunning = true;
+  updateAnalysisButton();
+  setAnalysisStatus("Collecting the scraped pages...");
+  els.analysisOutput.hidden = false;
+  els.analysisOutput.textContent = "";
+
+  try {
+    const scopedRun =
+      state.multiRun && state.chartRun !== "all"
+        ? state.loadedRuns.find((entry) => entry.run.id === state.chartRun)
+        : null;
+
+    const payload = {
+      pages: pages.map((p) => ({
+        title: p.page_title || p.title || "",
+        url: p.link || "",
+        query: p.query || null,
+        run: p._runLabel || null,
+        domain: p._domain || hostnameOf(p.link || ""),
+        fetched_at: p.fetched_at || null,
+        search_rank: p.search_rank ?? null,
+        word_count: p.word_count || 0,
+        description: p.meta_description || p.snippet || "",
+        excerpt: (p.text || "").slice(0, ANALYSIS_EXCERPT_CHARS),
+      })),
+      runs: state.loadedRuns.length
+        ? state.loadedRuns.map((entry) => ({
+            run: runShortLabel(entry.run),
+            generated_at: entry.run.generated_at || null,
+            queries: entry.run.queries || [],
+            summary: entry.summary || entry.run.summary || null,
+          }))
+        : [{ run: "Loaded file", summary: state.summary }],
+      context: {
+        run_filter: scopedRun ? runShortLabel(scopedRun.run) : "all runs",
+        query_filter:
+          state.chartQuery === "all"
+            ? "all queries"
+            : state.chartQuery.slice(2),
+        search_filter: state.analysisSearch.trim() || null,
+        pages_in_scope: inScope.length,
+        pages_sent: pages.length,
+        pages_omitted: inScope.length - pages.length,
+      },
+    };
+
+    setAnalysisStatus("Claude is reading the pages...");
+    let res;
+    try {
+      res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      setAnalysisStatus(
+        "Could not reach the analysis endpoint. Serve the explorer with " +
+          "python3 serve.py (instead of python3 -m http.server) and try again.",
+      );
+      els.analysisOutput.hidden = true;
+      return;
+    }
+
+    if (!res.ok) {
+      let message = `Analysis failed (HTTP ${res.status}).`;
+      if (res.status === 501 || res.status === 405) {
+        message =
+          "This server can't run analyses. Serve the explorer with " +
+          "python3 serve.py (instead of python3 -m http.server) and retry.";
+      } else {
+        try {
+          const err = await res.json();
+          if (err && err.error) message = `Analysis failed: ${err.error}`;
+        } catch {}
+      }
+      setAnalysisStatus(message);
+      els.analysisOutput.hidden = true;
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let renderQueued = 0;
+    const renderVisible = () => {
+      const cut = buffer.indexOf(ANALYSIS_SENTINEL);
+      renderMarkdownInto(
+        els.analysisOutput,
+        cut >= 0 ? buffer.slice(0, cut) : buffer,
+      );
+    };
+    const scheduleRender = () => {
+      if (renderQueued) return;
+      renderQueued = requestAnimationFrame(() => {
+        renderQueued = 0;
+        renderVisible();
+      });
+    };
+
+    let interrupted = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        scheduleRender();
+      }
+      buffer += decoder.decode();
+    } catch {
+      interrupted = true;
+    }
+    if (renderQueued) {
+      cancelAnimationFrame(renderQueued);
+      renderQueued = 0;
+    }
+    renderVisible();
+
+    const cut = buffer.indexOf(ANALYSIS_SENTINEL);
+    const text = (cut >= 0 ? buffer.slice(0, cut) : buffer).trim();
+    let meta = null;
+    if (cut >= 0) {
+      try {
+        meta = JSON.parse(buffer.slice(cut + 1));
+      } catch {}
+    }
+
+    if (!text) {
+      setAnalysisStatus(
+        meta && meta.stop_reason === "refusal"
+          ? "Claude declined to analyze this content - try a narrower selection."
+          : interrupted
+            ? "The connection dropped before Claude answered - try again."
+            : "Claude returned an empty analysis - try again.",
+      );
+      els.analysisOutput.hidden = true;
+      return;
+    }
+
+    if (interrupted) {
+      setAnalysisStatus(
+        "The connection ended before Claude finished - this may be incomplete.",
+      );
+    } else if (meta && meta.stop_reason === "refusal") {
+      setAnalysisStatus("Claude declined to finish this analysis.");
+    } else {
+      setAnalysisStatus("");
+    }
+  } catch {
+    setAnalysisStatus("Something went wrong running the analysis - try again.");
+  } finally {
+    analysisRunning = false;
+    updateAnalysisButton();
+  }
+}
+
 function init() {
   const params = new URLSearchParams(window.location.search);
 
@@ -2974,6 +3256,15 @@ function init() {
     state.chartQuery = els.chartQueryFilter.value;
     renderCharts();
   });
+
+  els.analyzeButton.addEventListener("click", runAnalysis);
+  els.analysisSearch.addEventListener(
+    "input",
+    debounce(() => {
+      state.analysisSearch = els.analysisSearch.value;
+      updateAnalysisButton();
+    }, 150),
+  );
 
   for (const [element, key] of [
     [els.queryFilter, "query"],

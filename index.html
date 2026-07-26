@@ -21,7 +21,7 @@
             aria-expanded="false"
             title="Choose one run, or several to compare"
           >
-            Choose runs&hellip;
+            Choose runs...
           </button>
           <div id="run-picker-menu" class="run-picker-menu" hidden>
             <div id="run-picker-list" class="run-picker-list"></div>
@@ -150,6 +150,34 @@
               hidden
             ></select>
           </div>
+          <section class="chart-card analysis-card">
+            <div class="analysis-head">
+              <div>
+                <h3 class="chart-title">Claude's Read On The Scraped Pages</h3>
+              </div>
+              <button
+                type="button"
+                id="analyze-button"
+                class="primary-button"
+                disabled
+              >
+                Analyze scraped pages with Claude
+              </button>
+            </div>
+            <input
+              type="search"
+              id="analysis-search"
+              class="analysis-search"
+              placeholder="Filter the pages to analyze by title, URL, query or page text..."
+            />
+            <p
+              id="analysis-status"
+              class="chart-note"
+              role="status"
+              aria-live="polite"
+            ></p>
+            <div id="analysis-output" class="analysis-output" hidden></div>
+          </section>
           <div id="charts" class="charts"></div>
         </section>
 
