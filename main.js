@@ -2931,7 +2931,7 @@ function updateAnalysisButton() {
 }
 
 function appendInline(parent, text) {
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > last) {
@@ -2942,6 +2942,8 @@ function appendInline(parent, text) {
     const token = match[0];
     if (token.startsWith("**")) {
       parent.appendChild(el("strong", "", token.slice(2, -2)));
+    } else if (token.startsWith("*")) {
+      parent.appendChild(el("em", "", token.slice(1, -1)));
     } else {
       parent.appendChild(el("code", "", token.slice(1, -1)));
     }
