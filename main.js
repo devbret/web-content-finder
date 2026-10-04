@@ -2898,7 +2898,6 @@ function renderErrors() {
 
 const ANALYSIS_SENTINEL = "\u001e";
 const ANALYSIS_EXCERPT_CHARS = 1500;
-const ANALYSIS_MAX_PAGES = 400;
 let analysisRunning = false;
 
 function pagesInAnalysisScope() {
@@ -3012,9 +3011,8 @@ function renderMarkdownInto(container, text) {
 
 async function runAnalysis() {
   if (analysisRunning) return;
-  const inScope = pagesInAnalysisScope();
-  if (!inScope.length) return;
-  const pages = inScope.slice(0, ANALYSIS_MAX_PAGES);
+  const pages = pagesInAnalysisScope();
+  if (!pages.length) return;
 
   analysisRunning = true;
   updateAnalysisButton();
@@ -3056,9 +3054,7 @@ async function runAnalysis() {
             ? "all queries"
             : state.chartQuery.slice(2),
         search_filter: state.analysisSearch.trim() || null,
-        pages_in_scope: inScope.length,
-        pages_sent: pages.length,
-        pages_omitted: inScope.length - pages.length,
+        pages_in_scope: pages.length,
       },
     };
 
