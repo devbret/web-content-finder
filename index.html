@@ -170,12 +170,26 @@
               class="analysis-search"
               placeholder="Filter the pages to analyze by title, URL, query or page text..."
             />
+            <label class="analysis-prompt-label" for="analysis-prompt">
+              Ask Claude something specific about these pages (optional)
+            </label>
+            <textarea
+              id="analysis-prompt"
+              class="analysis-prompt"
+              rows="3"
+              placeholder="e.g. Which pages mention pricing, and what do they claim? Or: summarize each page in one sentence."
+            ></textarea>
+            <p class="analysis-hint">
+              Leave this blank for the standard six-section analysis. Ctrl+Enter
+              (or Cmd+Enter) submits.
+            </p>
             <p
               id="analysis-status"
               class="chart-note"
               role="status"
               aria-live="polite"
             ></p>
+            <p id="analysis-asked" class="analysis-asked" hidden></p>
             <div id="analysis-output" class="analysis-output" hidden></div>
           </section>
           <div id="charts" class="charts"></div>

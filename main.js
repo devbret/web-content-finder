@@ -23,6 +23,7 @@ const state = {
   chartQuery: "all",
   chartRun: "all",
   analysisSearch: "",
+  analysisPrompt: "",
   status: "all",
   sort: "rank",
   visibleCount: PAGE_SIZE,
@@ -61,7 +62,9 @@ const els = {
   chartQueryFilter: document.getElementById("chart-query-filter"),
   analyzeButton: document.getElementById("analyze-button"),
   analysisSearch: document.getElementById("analysis-search"),
+  analysisPrompt: document.getElementById("analysis-prompt"),
   analysisStatus: document.getElementById("analysis-status"),
+  analysisAsked: document.getElementById("analysis-asked"),
   analysisOutput: document.getElementById("analysis-output"),
   errorsContent: document.getElementById("errors-content"),
   tooltip: document.getElementById("tooltip"),
@@ -2922,11 +2925,34 @@ function setAnalysisStatus(message) {
 function updateAnalysisButton() {
   if (!els.analyzeButton) return;
   const count = pagesInAnalysisScope().length;
+  const noun = `${formatNumber(count)} scraped ${count === 1 ? "page" : "pages"}`;
+  const asking = Boolean(state.analysisPrompt.trim());
   els.analyzeButton.textContent = analysisRunning
-    ? "Analyzing..."
-    : `Analyze ${formatNumber(count)} scraped ${count === 1 ? "page" : "pages"} with Claude`;
+    ? asking
+      ? "Asking Claude..."
+      : "Analyzing..."
+    : asking
+      ? `Ask Claude about ${noun}`
+      : `Analyze ${noun} with Claude`;
   els.analyzeButton.disabled = !analysisRunning && count === 0;
   els.analyzeButton.setAttribute("aria-busy", String(analysisRunning));
+}
+
+function showAskedPrompt(prompt) {
+  if (!prompt) {
+    els.analysisAsked.hidden = true;
+    els.analysisAsked.textContent = "";
+    return;
+  }
+  els.analysisAsked.textContent = "";
+  els.analysisAsked.appendChild(el("strong", "", "You asked: "));
+  els.analysisAsked.appendChild(document.createTextNode(prompt));
+  els.analysisAsked.hidden = false;
+}
+
+function hideAnalysisOutput() {
+  els.analysisOutput.hidden = true;
+  els.analysisAsked.hidden = true;
 }
 
 function appendInline(parent, text) {
@@ -3014,9 +3040,13 @@ async function runAnalysis() {
   const pages = pagesInAnalysisScope();
   if (!pages.length) return;
 
+  state.analysisPrompt = els.analysisPrompt.value;
+  const prompt = state.analysisPrompt.trim();
+
   analysisRunning = true;
   updateAnalysisButton();
   setAnalysisStatus("Collecting the scraped pages...");
+  showAskedPrompt(prompt);
   els.analysisOutput.hidden = false;
   els.analysisOutput.textContent = "";
 
@@ -3056,9 +3086,14 @@ async function runAnalysis() {
         search_filter: state.analysisSearch.trim() || null,
         pages_in_scope: pages.length,
       },
+      prompt: prompt || null,
     };
 
-    setAnalysisStatus("Claude is reading the pages...");
+    setAnalysisStatus(
+      prompt
+        ? "Claude is reading the pages with your question in mind..."
+        : "Claude is reading the pages...",
+    );
     let res;
     try {
       res = await fetch("/api/analyze", {
@@ -3071,7 +3106,7 @@ async function runAnalysis() {
         "Could not reach the analysis endpoint. Serve the explorer with " +
           "python3 serve.py (instead of python3 -m http.server) and try again.",
       );
-      els.analysisOutput.hidden = true;
+      hideAnalysisOutput();
       return;
     }
 
@@ -3088,7 +3123,7 @@ async function runAnalysis() {
         } catch {}
       }
       setAnalysisStatus(message);
-      els.analysisOutput.hidden = true;
+      hideAnalysisOutput();
       return;
     }
 
@@ -3141,12 +3176,12 @@ async function runAnalysis() {
     if (!text) {
       setAnalysisStatus(
         meta && meta.stop_reason === "refusal"
-          ? "Claude declined to analyze this content - try a narrower selection."
+          ? "Claude declined this request - try a narrower selection or a different question."
           : interrupted
             ? "The connection dropped before Claude answered - try again."
             : "Claude returned an empty analysis - try again.",
       );
-      els.analysisOutput.hidden = true;
+      hideAnalysisOutput();
       return;
     }
 
@@ -3263,6 +3298,19 @@ function init() {
       updateAnalysisButton();
     }, 150),
   );
+  els.analysisPrompt.addEventListener(
+    "input",
+    debounce(() => {
+      state.analysisPrompt = els.analysisPrompt.value;
+      updateAnalysisButton();
+    }, 150),
+  );
+  els.analysisPrompt.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      runAnalysis();
+    }
+  });
 
   for (const [element, key] of [
     [els.queryFilter, "query"],
